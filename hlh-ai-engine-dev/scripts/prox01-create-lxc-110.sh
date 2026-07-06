@@ -18,9 +18,19 @@ TEMPLATE="${TEMPLATE:-local:vztmpl/ubuntu-26.04-standard_26.04-1_amd64.tar.zst}"
 
 CONF_FILE="/etc/pve/lxc/${CTID}.conf"
 
+case "${UNPRIVILEGED}" in
+  1|true|TRUE|yes|YES) UNPRIVILEGED_NORM="1" ;;
+  0|false|FALSE|no|NO) UNPRIVILEGED_NORM="0" ;;
+  *)
+    echo "Invalid UNPRIVILEGED value: ${UNPRIVILEGED}. Expected 0/1 or true/false." >&2
+    exit 1
+    ;;
+esac
+
 if pct status "${CTID}" >/dev/null 2>&1; then
   echo "CT ${CTID} already exists. Skipping pct create and applying config safeguards."
 else
+  echo "Creating CT ${CTID} from template ${TEMPLATE} (unprivileged=${UNPRIVILEGED_NORM})"
   pct create "${CTID}" "${TEMPLATE}" \
     --hostname "${HOSTNAME}" \
     --cores "${CORES}" \
@@ -30,8 +40,10 @@ else
     --net0 "name=eth0,bridge=${BRIDGE},ip=${IP_CIDR},gw=${GATEWAY}" \
     --nameserver "${DNS_PRIMARY}" \
     --searchdomain "mizertech.net" \
-    --unprivileged "${UNPRIVILEGED}" \
-    --features "nesting=1,keyctl=1"
+    --unprivileged "${UNPRIVILEGED_NORM}"
+
+  # Apply features separately for broader compatibility across pct versions.
+  pct set "${CTID}" --features "nesting=1"
 fi
 
 if ! grep -q "lxc.cgroup2.devices.allow: c 226:\* rwm" "${CONF_FILE}"; then
@@ -52,4 +64,4 @@ pct start "${CTID}" >/dev/null 2>&1 || true
 pct exec "${CTID}" -- bash -lc "printf 'nameserver ${DNS_PRIMARY}\nnameserver ${DNS_SECONDARY}\n' > /etc/resolv.conf"
 
 echo "CT ${CTID} configured: ${HOSTNAME} ${IP_CIDR}"
-echo "Unprivileged=${UNPRIVILEGED}, GPU passthrough mounts and device cgroup rules applied."
+echo "Unprivileged=${UNPRIVILEGED_NORM}, GPU passthrough mounts and device cgroup rules applied."
