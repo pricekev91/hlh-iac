@@ -25,29 +25,66 @@ ROCM_APT_CODENAME="${ROCM_APT_CODENAME:-noble}"
 
 echo "==> Deploying CT ${CTID} on ${PROXMOX_SSH}"
 
-echo "==> Pushing host-side create script"
-scp -q "${SCRIPT_DIR}/scripts/prox01-create-lxc-110.sh" "${PROXMOX_SSH}:/root/prox01-create-lxc-110.sh"
+LOCAL_MODE=0
+if command -v pveversion >/dev/null 2>&1; then
+	case "${PROXMOX_SSH}" in
+		root@prox01|prox01|root@localhost|localhost|root@127.0.0.1|127.0.0.1)
+			LOCAL_MODE=1
+			;;
+	esac
+fi
+
+if [[ "${LOCAL_MODE}" -eq 1 ]]; then
+	echo "==> Local mode: running directly on Proxmox host"
+	cp "${SCRIPT_DIR}/scripts/prox01-create-lxc-110.sh" /root/prox01-create-lxc-110.sh
+else
+	echo "==> Pushing host-side create script"
+	scp -q "${SCRIPT_DIR}/scripts/prox01-create-lxc-110.sh" "${PROXMOX_SSH}:/root/prox01-create-lxc-110.sh"
+fi
 
 echo "==> Creating/configuring CT"
-ssh -q "${PROXMOX_SSH}" \
-	"chmod +x /root/prox01-create-lxc-110.sh && \
-	 CTID='${CTID}' HOSTNAME='${HOSTNAME}' IP_CIDR='${IP_CIDR}' GATEWAY='${GATEWAY}' \
-	 DNS_PRIMARY='${DNS_PRIMARY}' DNS_SECONDARY='${DNS_SECONDARY}' BRIDGE='${BRIDGE}' \
-	 STORAGE='${STORAGE}' DISK_GB='${DISK_GB}' CORES='${CORES}' MEMORY_MB='${MEMORY_MB}' SWAP_MB='${SWAP_MB}' \
-	 UNPRIVILEGED='${UNPRIVILEGED}' TEMPLATE='${TEMPLATE}' \
-	 /root/prox01-create-lxc-110.sh"
+if [[ "${LOCAL_MODE}" -eq 1 ]]; then
+	chmod +x /root/prox01-create-lxc-110.sh
+	CTID='${CTID}' HOSTNAME='${HOSTNAME}' IP_CIDR='${IP_CIDR}' GATEWAY='${GATEWAY}' \
+	DNS_PRIMARY='${DNS_PRIMARY}' DNS_SECONDARY='${DNS_SECONDARY}' BRIDGE='${BRIDGE}' \
+	STORAGE='${STORAGE}' DISK_GB='${DISK_GB}' CORES='${CORES}' MEMORY_MB='${MEMORY_MB}' SWAP_MB='${SWAP_MB}' \
+	UNPRIVILEGED='${UNPRIVILEGED}' TEMPLATE='${TEMPLATE}' \
+	/root/prox01-create-lxc-110.sh
+else
+	ssh -q "${PROXMOX_SSH}" \
+		"chmod +x /root/prox01-create-lxc-110.sh && \
+		 CTID='${CTID}' HOSTNAME='${HOSTNAME}' IP_CIDR='${IP_CIDR}' GATEWAY='${GATEWAY}' \
+		 DNS_PRIMARY='${DNS_PRIMARY}' DNS_SECONDARY='${DNS_SECONDARY}' BRIDGE='${BRIDGE}' \
+		 STORAGE='${STORAGE}' DISK_GB='${DISK_GB}' CORES='${CORES}' MEMORY_MB='${MEMORY_MB}' SWAP_MB='${SWAP_MB}' \
+		 UNPRIVILEGED='${UNPRIVILEGED}' TEMPLATE='${TEMPLATE}' \
+		 /root/prox01-create-lxc-110.sh"
+fi
 
 echo "==> Pushing in-container installer"
-ssh -q "${PROXMOX_SSH}" "pct push ${CTID} /root/prox01-create-lxc-110.sh /root/.placeholder-from-host.sh >/dev/null 2>&1 || true"
-scp -q "${SCRIPT_DIR}/scripts/in-ct-install-rocm-vllm.sh" "${PROXMOX_SSH}:/root/in-ct-install-rocm-vllm.sh"
-ssh -q "${PROXMOX_SSH}" "pct push ${CTID} /root/in-ct-install-rocm-vllm.sh /root/in-ct-install-rocm-vllm.sh"
+if [[ "${LOCAL_MODE}" -eq 1 ]]; then
+	cp "${SCRIPT_DIR}/scripts/in-ct-install-rocm-vllm.sh" /root/in-ct-install-rocm-vllm.sh
+	pct push "${CTID}" /root/in-ct-install-rocm-vllm.sh /root/in-ct-install-rocm-vllm.sh
+else
+	scp -q "${SCRIPT_DIR}/scripts/in-ct-install-rocm-vllm.sh" "${PROXMOX_SSH}:/root/in-ct-install-rocm-vllm.sh"
+	ssh -q "${PROXMOX_SSH}" "pct push ${CTID} /root/in-ct-install-rocm-vllm.sh /root/in-ct-install-rocm-vllm.sh"
+fi
 
 echo "==> Running ROCm + vLLM bootstrap inside CT ${CTID}"
-ssh -q "${PROXMOX_SSH}" \
-	"pct exec ${CTID} -- bash -lc 'chmod +x /root/in-ct-install-rocm-vllm.sh && ROCM_APT_CODENAME=\"${ROCM_APT_CODENAME}\" /root/in-ct-install-rocm-vllm.sh'"
+if [[ "${LOCAL_MODE}" -eq 1 ]]; then
+	pct exec "${CTID}" -- bash -lc "chmod +x /root/in-ct-install-rocm-vllm.sh && ROCM_APT_CODENAME='${ROCM_APT_CODENAME}' /root/in-ct-install-rocm-vllm.sh"
+else
+	ssh -q "${PROXMOX_SSH}" \
+		"pct exec ${CTID} -- bash -lc 'chmod +x /root/in-ct-install-rocm-vllm.sh && ROCM_APT_CODENAME=\"${ROCM_APT_CODENAME}\" /root/in-ct-install-rocm-vllm.sh'"
+fi
 
 echo "==> Deployment complete"
 echo "Next checks:"
-echo "  ssh ${PROXMOX_SSH} 'pct exec ${CTID} -- rocminfo | head -n 40'"
-echo "  ssh ${PROXMOX_SSH} 'pct exec ${CTID} -- amd-smi static || true'"
-echo "  ssh ${PROXMOX_SSH} 'pct exec ${CTID} -- /opt/vllm-venv/bin/python -c \"import torch; print(torch.cuda.is_available())\"'"
+if [[ "${LOCAL_MODE}" -eq 1 ]]; then
+	echo "  pct exec ${CTID} -- rocminfo | head -n 40"
+	echo "  pct exec ${CTID} -- amd-smi static || true"
+	echo "  pct exec ${CTID} -- /opt/vllm-venv/bin/python -c \"import torch; print(torch.cuda.is_available())\""
+else
+	echo "  ssh ${PROXMOX_SSH} 'pct exec ${CTID} -- rocminfo | head -n 40'"
+	echo "  ssh ${PROXMOX_SSH} 'pct exec ${CTID} -- amd-smi static || true'"
+	echo "  ssh ${PROXMOX_SSH} 'pct exec ${CTID} -- /opt/vllm-venv/bin/python -c \"import torch; print(torch.cuda.is_available())\"'"
+fi

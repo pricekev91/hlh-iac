@@ -30,6 +30,9 @@ If GPU permissions are blocked by host-side UID/GID mapping constraints, switch 
 
    PROXMOX_SSH=root@prox01 ./deploy-hlh-ai-engine-dev.sh
 
+   You can run this either from your workstation or directly on prox01.
+   When run on prox01, the script automatically switches to local mode and avoids SSH/SCP to itself.
+
 3. Verify:
 
    ssh root@prox01 "pct exec 110 -- verify-rocm-vllm"
