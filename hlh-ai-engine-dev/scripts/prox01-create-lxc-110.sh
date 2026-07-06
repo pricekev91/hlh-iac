@@ -27,6 +27,17 @@ case "${UNPRIVILEGED}" in
     ;;
 esac
 
+if ! pvesm status --enabled 1 --storage "${STORAGE}" >/dev/null 2>&1; then
+  FALLBACK_STORAGE="$(pvesm status --enabled 1 --content rootdir | awk 'NR>1 {print $1; exit}')"
+  if [[ -z "${FALLBACK_STORAGE}" ]]; then
+    echo "Requested storage '${STORAGE}' does not exist and no enabled rootdir-capable storage was found." >&2
+    echo "Set STORAGE explicitly to a valid LXC-capable storage and rerun." >&2
+    exit 1
+  fi
+  echo "Requested storage '${STORAGE}' not found. Falling back to '${FALLBACK_STORAGE}'."
+  STORAGE="${FALLBACK_STORAGE}"
+fi
+
 if pct status "${CTID}" >/dev/null 2>&1; then
   echo "CT ${CTID} already exists. Skipping pct create and applying config safeguards."
 else
