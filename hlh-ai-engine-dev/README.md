@@ -13,13 +13,12 @@ Greenfield Proxmox LXC deployment for a ROCm + vLLM development engine on prox01
 - RAM: 55296 MB (54 GB)
 - Disk: 64 GB
 - Base image: Ubuntu 26.04 template
-- LXC privilege mode: unprivileged by default
+- LXC privilege mode: privileged by default
 
-## Why unprivileged by default
+## Why privileged by default
 
-Unprivileged LXC is the safer baseline and should work for ROCm userspace if /dev/dri and /dev/kfd are correctly passed through.
-If GPU permissions are blocked by host-side UID/GID mapping constraints, switch to privileged as an operational fallback.
-The deploy script now auto-falls back by destroying and recreating CT 110 as privileged when it detects `/dev/kfd` permission denial in unprivileged mode.
+ROCm on AMD iGPU in LXC is substantially more reliable in privileged mode because `/dev/kfd` and DRM access can be blocked by unprivileged mapping and host policy.
+You can still test unprivileged mode by setting `UNPRIVILEGED=1`, and the deploy script can recreate privileged if `/dev/kfd` permission denial is detected.
 
 ## Quick start
 

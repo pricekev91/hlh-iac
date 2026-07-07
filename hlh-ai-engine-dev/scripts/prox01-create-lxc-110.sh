@@ -13,7 +13,7 @@ DISK_GB="${DISK_GB:-64}"
 CORES="${CORES:-12}"
 MEMORY_MB="${MEMORY_MB:-55296}"
 SWAP_MB="${SWAP_MB:-4096}"
-UNPRIVILEGED="${UNPRIVILEGED:-1}"
+UNPRIVILEGED="${UNPRIVILEGED:-0}"
 TEMPLATE="${TEMPLATE:-local:vztmpl/ubuntu-26.04-standard_26.04-1_amd64.tar.zst}"
 FORCE_RECREATE="${FORCE_RECREATE:-0}"
 
@@ -63,7 +63,12 @@ else
     --unprivileged "${UNPRIVILEGED_NORM}"
 
   # Apply features separately for broader compatibility across pct versions.
-  pct set "${CTID}" --features "nesting=1"
+  pct set "${CTID}" --features "nesting=1,keyctl=1"
+fi
+
+WAS_RUNNING=0
+if pct status "${CTID}" 2>/dev/null | grep -q "status: running"; then
+  WAS_RUNNING=1
 fi
 
 if ! grep -q "lxc.cgroup2.devices.allow: c 226:\* rwm" "${CONF_FILE}"; then
@@ -78,9 +83,23 @@ fi
 if ! grep -q "lxc.mount.entry: /dev/kfd dev/kfd none bind,optional,create=file" "${CONF_FILE}"; then
   echo "lxc.mount.entry: /dev/kfd dev/kfd none bind,optional,create=file" >> "${CONF_FILE}"
 fi
+if ! grep -q "lxc.apparmor.profile: unconfined" "${CONF_FILE}"; then
+  echo "lxc.apparmor.profile: unconfined" >> "${CONF_FILE}"
+fi
+if ! grep -q "lxc.cgroup2.devices.allow: a" "${CONF_FILE}"; then
+  echo "lxc.cgroup2.devices.allow: a" >> "${CONF_FILE}"
+fi
+if ! grep -q "^lxc.cap.drop:$" "${CONF_FILE}"; then
+  echo "lxc.cap.drop:" >> "${CONF_FILE}"
+fi
 
-# Add secondary DNS inside container after first boot.
+# Apply config changes reliably.
+if [[ "${WAS_RUNNING}" == "1" ]]; then
+  pct stop "${CTID}" >/dev/null 2>&1 || true
+fi
 pct start "${CTID}" >/dev/null 2>&1 || true
+
+# Add secondary DNS inside container after boot.
 pct exec "${CTID}" -- bash -lc "printf 'nameserver ${DNS_PRIMARY}\nnameserver ${DNS_SECONDARY}\n' > /etc/resolv.conf"
 
 echo "CT ${CTID} configured: ${HOSTNAME} ${IP_CIDR}"
