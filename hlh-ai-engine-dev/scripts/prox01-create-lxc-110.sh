@@ -15,6 +15,7 @@ MEMORY_MB="${MEMORY_MB:-55296}"
 SWAP_MB="${SWAP_MB:-4096}"
 UNPRIVILEGED="${UNPRIVILEGED:-1}"
 TEMPLATE="${TEMPLATE:-local:vztmpl/ubuntu-26.04-standard_26.04-1_amd64.tar.zst}"
+FORCE_RECREATE="${FORCE_RECREATE:-0}"
 
 CONF_FILE="/etc/pve/lxc/${CTID}.conf"
 
@@ -36,6 +37,14 @@ if ! pvesm status --enabled 1 --storage "${STORAGE}" >/dev/null 2>&1; then
   fi
   echo "Requested storage '${STORAGE}' not found. Falling back to '${FALLBACK_STORAGE}'."
   STORAGE="${FALLBACK_STORAGE}"
+fi
+
+if [[ "${FORCE_RECREATE}" == "1" ]]; then
+  if pct status "${CTID}" >/dev/null 2>&1; then
+    echo "FORCE_RECREATE=1 set, destroying existing CT ${CTID}"
+    pct stop "${CTID}" >/dev/null 2>&1 || true
+    pct destroy "${CTID}" --purge 1
+  fi
 fi
 
 if pct status "${CTID}" >/dev/null 2>&1; then

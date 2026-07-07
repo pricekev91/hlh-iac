@@ -87,15 +87,24 @@ fi
 
 if echo "${ROCM_CHECK_OUTPUT}" | grep -qi "Unable to open /dev/kfd read-write: Permission denied"; then
 	if [[ "${UNPRIVILEGED}" == "1" && "${AUTO_PRIVILEGED_FALLBACK}" == "1" ]]; then
-		echo "==> Unprivileged /dev/kfd permission denied detected; switching CT ${CTID} to privileged mode"
+		echo "==> Unprivileged /dev/kfd permission denied detected; recreating CT ${CTID} as privileged"
 		if [[ "${LOCAL_MODE}" -eq 1 ]]; then
-			pct stop "${CTID}" >/dev/null 2>&1 || true
-			pct set "${CTID}" --unprivileged 0
-			pct start "${CTID}"
+			chmod +x /root/prox01-create-lxc-110.sh
+			CTID="${CTID}" HOSTNAME="${HOSTNAME}" IP_CIDR="${IP_CIDR}" GATEWAY="${GATEWAY}" \
+			DNS_PRIMARY="${DNS_PRIMARY}" DNS_SECONDARY="${DNS_SECONDARY}" BRIDGE="${BRIDGE}" \
+			STORAGE="${STORAGE}" DISK_GB="${DISK_GB}" CORES="${CORES}" MEMORY_MB="${MEMORY_MB}" SWAP_MB="${SWAP_MB}" \
+			UNPRIVILEGED="0" FORCE_RECREATE="1" TEMPLATE="${TEMPLATE}" \
+			/root/prox01-create-lxc-110.sh
 			pct push "${CTID}" /root/in-ct-install-rocm-vllm.sh /root/in-ct-install-rocm-vllm.sh
 			pct exec "${CTID}" -- bash -lc "chmod +x /root/in-ct-install-rocm-vllm.sh && ROCM_APT_CODENAME='${ROCM_APT_CODENAME}' /root/in-ct-install-rocm-vllm.sh"
 		else
-			ssh -q "${PROXMOX_SSH}" "pct stop ${CTID} >/dev/null 2>&1 || true && pct set ${CTID} --unprivileged 0 && pct start ${CTID}"
+			ssh -q "${PROXMOX_SSH}" \
+				"chmod +x /root/prox01-create-lxc-110.sh && \
+				 CTID='${CTID}' HOSTNAME='${HOSTNAME}' IP_CIDR='${IP_CIDR}' GATEWAY='${GATEWAY}' \
+				 DNS_PRIMARY='${DNS_PRIMARY}' DNS_SECONDARY='${DNS_SECONDARY}' BRIDGE='${BRIDGE}' \
+				 STORAGE='${STORAGE}' DISK_GB='${DISK_GB}' CORES='${CORES}' MEMORY_MB='${MEMORY_MB}' SWAP_MB='${SWAP_MB}' \
+				 UNPRIVILEGED='0' FORCE_RECREATE='1' TEMPLATE='${TEMPLATE}' \
+				 /root/prox01-create-lxc-110.sh"
 			ssh -q "${PROXMOX_SSH}" "pct push ${CTID} /root/in-ct-install-rocm-vllm.sh /root/in-ct-install-rocm-vllm.sh"
 			ssh -q "${PROXMOX_SSH}" "pct exec ${CTID} -- bash -lc 'chmod +x /root/in-ct-install-rocm-vllm.sh && ROCM_APT_CODENAME=\"${ROCM_APT_CODENAME}\" /root/in-ct-install-rocm-vllm.sh'"
 		fi
