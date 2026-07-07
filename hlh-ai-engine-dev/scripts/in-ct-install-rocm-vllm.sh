@@ -46,7 +46,11 @@ python3 -m venv /opt/vllm-venv
   --index-url https://download.pytorch.org/whl/rocm6.4 \
   torch torchvision torchaudio || true
 
-/opt/vllm-venv/bin/pip install --upgrade vllm
+# Ask vLLM build/install logic to target ROCm where supported.
+VLLM_TARGET_DEVICE=rocm /opt/vllm-venv/bin/pip install --upgrade vllm
+
+echo "=== Python package sanity (ROCm vs CUDA signals) ==="
+/opt/vllm-venv/bin/pip list | grep -Ei '^(vllm|torch|torchaudio|torchvision|nvidia-cuda|humming-kernels)' || true
 
 cat >/usr/local/bin/vllm-serve <<'EOF'
 #!/usr/bin/env bash
@@ -82,10 +86,11 @@ echo "=== Torch HIP availability ==="
 /opt/vllm-venv/bin/python - <<'PY'
 import torch
 print('torch:', torch.__version__)
-print('cuda_available:', torch.cuda.is_available())
-print('device_count:', torch.cuda.device_count())
-if torch.cuda.is_available():
-    print('device_name_0:', torch.cuda.get_device_name(0))
+print('hip_version:', torch.version.hip)
+print('rocm_gpu_available:', bool(torch.version.hip) and torch.cuda.is_available())
+print('gpu_device_count:', torch.cuda.device_count())
+if torch.cuda.device_count() > 0:
+  print('gpu_device_0:', torch.cuda.get_device_name(0))
 PY
 
 echo "=== vLLM version ==="

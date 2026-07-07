@@ -116,9 +116,9 @@ echo "Next checks:"
 if [[ "${LOCAL_MODE}" -eq 1 ]]; then
 	echo "  pct exec ${CTID} -- rocminfo | head -n 40"
 	echo "  pct exec ${CTID} -- amd-smi static || true"
-	echo "  pct exec ${CTID} -- /opt/vllm-venv/bin/python -c \"import torch; print(torch.cuda.is_available())\""
+	echo "  pct exec ${CTID} -- /opt/vllm-venv/bin/python -c \"import torch; print(torch.version.hip, bool(torch.version.hip) and torch.cuda.is_available())\""
 else
 	echo "  ssh ${PROXMOX_SSH} 'pct exec ${CTID} -- rocminfo | head -n 40'"
 	echo "  ssh ${PROXMOX_SSH} 'pct exec ${CTID} -- amd-smi static || true'"
-	echo "  ssh ${PROXMOX_SSH} 'pct exec ${CTID} -- /opt/vllm-venv/bin/python -c \"import torch; print(torch.cuda.is_available())\"'"
+	echo "  ssh ${PROXMOX_SSH} 'pct exec ${CTID} -- /opt/vllm-venv/bin/python -c \"import torch; print(torch.version.hip, bool(torch.version.hip) and torch.cuda.is_available())\"'"
 fi
