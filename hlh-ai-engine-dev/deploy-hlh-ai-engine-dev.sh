@@ -22,6 +22,7 @@ SWAP_MB="${SWAP_MB:-4096}"
 UNPRIVILEGED="${UNPRIVILEGED:-1}"
 TEMPLATE="${TEMPLATE:-local:vztmpl/ubuntu-26.04-standard_26.04-1_amd64.tar.zst}"
 ROCM_APT_CODENAME="${ROCM_APT_CODENAME:-noble}"
+AUTO_PRIVILEGED_FALLBACK="${AUTO_PRIVILEGED_FALLBACK:-1}"
 
 echo "==> Deploying CT ${CTID} on ${PROXMOX_SSH}"
 
@@ -75,6 +76,30 @@ if [[ "${LOCAL_MODE}" -eq 1 ]]; then
 else
 	ssh -q "${PROXMOX_SSH}" \
 		"pct exec ${CTID} -- bash -lc 'chmod +x /root/in-ct-install-rocm-vllm.sh && ROCM_APT_CODENAME=\"${ROCM_APT_CODENAME}\" /root/in-ct-install-rocm-vllm.sh'"
+fi
+
+echo "==> Checking ROCm /dev/kfd access"
+if [[ "${LOCAL_MODE}" -eq 1 ]]; then
+	ROCM_CHECK_OUTPUT="$(pct exec "${CTID}" -- bash -lc "rocminfo 2>&1 | head -n 80" || true)"
+else
+	ROCM_CHECK_OUTPUT="$(ssh -q "${PROXMOX_SSH}" "pct exec ${CTID} -- bash -lc 'rocminfo 2>&1 | head -n 80'" || true)"
+fi
+
+if echo "${ROCM_CHECK_OUTPUT}" | grep -qi "Unable to open /dev/kfd read-write: Permission denied"; then
+	if [[ "${UNPRIVILEGED}" == "1" && "${AUTO_PRIVILEGED_FALLBACK}" == "1" ]]; then
+		echo "==> Unprivileged /dev/kfd permission denied detected; switching CT ${CTID} to privileged mode"
+		if [[ "${LOCAL_MODE}" -eq 1 ]]; then
+			pct stop "${CTID}" >/dev/null 2>&1 || true
+			pct set "${CTID}" --unprivileged 0
+			pct start "${CTID}"
+			pct push "${CTID}" /root/in-ct-install-rocm-vllm.sh /root/in-ct-install-rocm-vllm.sh
+			pct exec "${CTID}" -- bash -lc "chmod +x /root/in-ct-install-rocm-vllm.sh && ROCM_APT_CODENAME='${ROCM_APT_CODENAME}' /root/in-ct-install-rocm-vllm.sh"
+		else
+			ssh -q "${PROXMOX_SSH}" "pct stop ${CTID} >/dev/null 2>&1 || true && pct set ${CTID} --unprivileged 0 && pct start ${CTID}"
+			ssh -q "${PROXMOX_SSH}" "pct push ${CTID} /root/in-ct-install-rocm-vllm.sh /root/in-ct-install-rocm-vllm.sh"
+			ssh -q "${PROXMOX_SSH}" "pct exec ${CTID} -- bash -lc 'chmod +x /root/in-ct-install-rocm-vllm.sh && ROCM_APT_CODENAME=\"${ROCM_APT_CODENAME}\" /root/in-ct-install-rocm-vllm.sh'"
+		fi
+	fi
 fi
 
 echo "==> Deployment complete"

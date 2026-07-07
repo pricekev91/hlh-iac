@@ -19,6 +19,7 @@ Greenfield Proxmox LXC deployment for a ROCm + vLLM development engine on prox01
 
 Unprivileged LXC is the safer baseline and should work for ROCm userspace if /dev/dri and /dev/kfd are correctly passed through.
 If GPU permissions are blocked by host-side UID/GID mapping constraints, switch to privileged as an operational fallback.
+The deploy script now auto-falls back to privileged mode when it detects `/dev/kfd` permission denial in unprivileged mode.
 
 ## Quick start
 
@@ -42,6 +43,10 @@ If GPU permissions are blocked by host-side UID/GID mapping constraints, switch 
 You can override all defaults at runtime, for example:
 
 CTID=110 TEMPLATE=local:vztmpl/ubuntu-26.04-standard_26.04-1_amd64.tar.zst STORAGE=local-lvm PROXMOX_SSH=root@prox01 ./deploy-hlh-ai-engine-dev.sh
+
+Disable automatic privileged fallback if you are actively testing unprivileged tuning:
+
+AUTO_PRIVILEGED_FALLBACK=0 ./deploy-hlh-ai-engine-dev.sh
 
 ## Key files
 
