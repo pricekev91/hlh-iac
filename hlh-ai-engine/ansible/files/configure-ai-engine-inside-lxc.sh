@@ -12,7 +12,7 @@
 #   0.5.0 - Fixed HIP compiler: use HIPCXX env var pointing to clang, not hipcc wrapper
 #   0.6.0 - Added glslc, pre-build checks, fixed LD_LIBRARY_PATH unbound variable
 #   0.6.2 - Disabled Vulkan (missing SPIRV-Headers); ROCm only
-#   0.7.0 - Upgraded to ROCm 7.2.3 for native gfx1150 (Strix Halo) rocBLAS support
+#   0.7.0 - Upgraded to ROCm 7.14.0 for native gfx1150 (Strix Halo) rocBLAS support
 #            Fixed -ngl flag, removed --flash-attn, added render/video group for root
 #            Fixed KFD cgroup device major (511, not 238) documented in create script
 #   0.8.0 - switch-model.sh v1.3.0: full ctx-size + KV cache + MTP auto-detect
@@ -40,9 +40,9 @@ LLAMA_CPP_DIR="/opt/llama.cpp"
 SERVICE_NAME="ai-engine"
 SYSTEMD_SERVICE="/etc/systemd/system/${SERVICE_NAME}.service"
 SWITCH_SCRIPT="/usr/local/bin/switch-model.sh"
-GFX_VERSION="11.5.0"   # gfx1150 native — rocBLAS 7.2.3 supports it
+GFX_VERSION="11.5.0"   # gfx1150 native — rocBLAS 7.14.0 supports it
 ROCM_PATH="/opt/rocm"
-ROCM_VERSION="7.2.3"
+ROCM_VERSION="7.14.0"
 
 # --- 1. BASE DEPENDENCIES ---
 echo "[1/7] Installing base dependencies..."
@@ -52,7 +52,7 @@ apt-get install -y --no-install-recommends \
   python3 python3-pip curl wget unzip \
   libopenblas-dev libssl-dev ca-certificates gnupg
 
-# --- 1b. ADD ROCM 7.2.3 REPO ---
+# --- 1b. ADD ROCM 7.14.0 REPO ---
 echo "[1/7] Adding ROCm ${ROCM_VERSION} repository..."
 mkdir -p /etc/apt/keyrings
 wget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | \
