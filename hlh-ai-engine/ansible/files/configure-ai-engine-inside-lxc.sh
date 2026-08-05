@@ -77,7 +77,17 @@ apt-get remove -y rocminfo 2>/dev/null || true
 
 apt-get update
 apt-get install -y --no-install-recommends \
-  amdrocm7.14-gfx1150
+  amdrocm7.14-gfx1150 \
+  amdrocm-core-dev7.14-gfx1150
+
+# llama.cpp HIP builds require the HIP CMake package (hip-lang-config.cmake),
+# which is provided by ROCm developer components.
+if [ ! -f /opt/rocm/lib/cmake/hip-lang/hip-lang-config.cmake ] && \
+   [ ! -f /opt/rocm/lib64/cmake/hip-lang/hip-lang-config.cmake ] && \
+   [ ! -f /opt/rocm/lib/x86_64-unknown-linux-gnu/cmake/hip-lang/hip-lang-config.cmake ]; then
+  echo "ERROR: HIP CMake package not found after ROCm install (hip-lang-config.cmake)." >&2
+  exit 1
+fi
 
 # Add root to render and video groups for GPU access
 usermod -aG render root
