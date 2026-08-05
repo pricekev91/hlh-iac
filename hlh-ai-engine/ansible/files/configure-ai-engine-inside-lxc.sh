@@ -56,12 +56,11 @@ apt-get install -y --no-install-recommends \
 # --- 1b. ADD ROCM 7.14.0 REPO ---
 echo "[1/7] Adding ROCm ${ROCM_VERSION} repository..."
 mkdir -p /etc/apt/keyrings
-wget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | \
-  gpg --dearmor | tee /etc/apt/keyrings/rocm.gpg > /dev/null
+wget -qO - https://repo.amd.com/rocm/packages-multi-arch/gpg/rocm.gpg | \
+  gpg --dearmor | tee /etc/apt/keyrings/amdrocm.gpg > /dev/null
 
 tee /etc/apt/sources.list.d/rocm.list << EOF
-deb [arch=amd64 trusted=yes] https://repo.radeon.com/rocm/apt/${ROCM_VERSION} noble main
-deb [arch=amd64 trusted=yes] https://repo.radeon.com/graphics/${ROCM_VERSION}/ubuntu noble main
+deb [arch=amd64 signed-by=/etc/apt/keyrings/amdrocm.gpg] https://repo.amd.com/rocm/packages-multi-arch/ubuntu2404 stable main
 EOF
 
 echo 'APT::Key::GPGCommand "/usr/bin/gpg";' > /etc/apt/apt.conf.d/99gpg-override
@@ -78,13 +77,7 @@ apt-get remove -y rocminfo 2>/dev/null || true
 
 apt-get update
 apt-get install -y --no-install-recommends \
-  rocm-hip-runtime \
-  rocm-hip-runtime-dev \
-  rocm-smi-lib \
-  rocminfo \
-  rocm-device-libs \
-  hipblas-dev \
-  rocblas-dev
+  amdrocm7.14-gfx1150
 
 # Add root to render and video groups for GPU access
 usermod -aG render root
