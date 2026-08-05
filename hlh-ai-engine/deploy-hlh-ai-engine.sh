@@ -50,14 +50,35 @@ command -v pct >/dev/null 2>&1 || { echo "ERROR: pct command not found. Run on P
 [[ -f "$BOOTSTRAP_SCRIPT" ]] || { echo "ERROR: Bootstrap script not found: $BOOTSTRAP_SCRIPT" >&2; exit 1; }
 
 
+confirm_existing_lxc_delete() {
+	local answer
+
+	printf '%s\n' 'Are you sure?  hlh-ai-engine is already running and deployed!'
+	printf '%s' 'Delete it and redeploy? [y/N] '
+	read -r answer
+
+	case "$answer" in
+		y|Y|yes|YES)
+			return 0
+			;;
+		*)
+			echo "Aborted." >&2
+			exit 1
+			;;
+	esac
+}
+
+
 echo "[1/6] Creating model storage directory on ${POOL}..."
 mkdir -p "${MODEL_HOST_DIR}"
 chown 0:0 "${MODEL_HOST_DIR}"
 chmod 775 "${MODEL_HOST_DIR}"
 
 if pct status "${LXC_ID}" >/dev/null 2>&1; then
-	echo "ERROR: LXC ${LXC_ID} already exists. Delete it first or change LXC_ID in script." >&2
-	exit 1
+	confirm_existing_lxc_delete
+	echo "[1/6] Deleting existing LXC ${LXC_ID} so it can be redeployed..."
+	pct stop "${LXC_ID}" >/dev/null 2>&1 || true
+	pct destroy "${LXC_ID}" >/dev/null 2>&1 || pct delete "${LXC_ID}"
 fi
 
 echo "[2/6] Creating privileged Ubuntu LXC (${LXC_ID}, ${LXC_NAME}) on ${POOL}..."
