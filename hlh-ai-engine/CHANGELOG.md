@@ -9,7 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Stabilize llama-server startup defaults for LXC (520fd73)
+- Upgrade ROCm from 7.2.3 to 7.14.0 (native gfx1150 rocBLAS support)
+- Switch llama-server from port 8080 (nginx) to port 80 (native web UI)
+- Update default model to Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
+
+### Fixed
+
+- Fix ROCm 7.14 repo URLs for Ubuntu 24.04
+- Install ROCm dev package required for HIP CMake builds
 
 ## [0.3.1] - 2026-06
 

@@ -98,3 +98,21 @@ variable "lxc_root_password" {
   default     = ""
   sensitive   = true
 }
+
+variable "description" {
+  description = "LXC description"
+  type        = string
+  default     = "llama.cpp AI engine with ROCm 7.14.0, model storage on RaidZ1-6TB"
+}
+
+variable "model_mount_path" {
+  description = "Host path for model storage mount point inside LXC"
+  type        = string
+  default     = "/srv/ai/models"
+}
+
+variable "model_storage" {
+  description = "Proxmox storage pool for model volume"
+  type        = string
+  default     = "RaidZ1-6TB"
+}

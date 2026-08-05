@@ -24,6 +24,7 @@ resource "proxmox_lxc" "hlh_ai_engine" {
   swap         = var.swap
   unprivileged = false
   start        = true
+  description  = var.description
 
   features {
     nesting = true
@@ -45,6 +46,27 @@ resource "proxmox_lxc" "hlh_ai_engine" {
     storage = var.storage
     size    = "${var.rootfs_size_gb}G"
   }
+
+  # GPU passthrough - AMD GPU for ROCm
+  device {
+    name = "gpu0"
+    gpu  = "gfx1150"
+  }
+
+  # Model storage volume mount (host /srv/ai/models -> LXC /srv/ai/models)
+  mp0 {
+    path    = var.model_mount_path
+    storage = var.model_storage
+  }
+
+  # NOTE: cgroup2 device allow rules (c 226:* rwm, c 511:0 rwm) and
+  # bind-mount entries (/dev/dri, /dev/kfd) must be appended to the
+  # LXC .conf file after creation. Use deploy-hlh-ai-engine.sh for
+  # full provisioning or run manually:
+  #   pct set <VMID> --lxc.conf 'lxc.cgroup2.devices.allow: c 226:* rwm'
+  #   pct set <VMID> --lxc.conf 'lxc.cgroup2.devices.allow: c 511:0 rwm'
+  #   pct set <VMID> --lxc.conf 'lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir'
+  #   pct set <VMID> --lxc.conf 'lxc.mount.entry: /dev/kfd dev/kfd none bind,optional,create=file'
 }
 
 output "lxc_vmid" {

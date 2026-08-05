@@ -92,7 +92,7 @@ pct create "${LXC_ID}" "${LXC_IMAGE}" \
 	--unprivileged 0 \
 	--onboot 1 \
 	--mp0 "${MODEL_HOST_DIR},mp=${MODEL_LXC_DIR}" \
-	--description "llama.cpp AI engine with ROCm ${ROCM_VERSION}, model storage on ${POOL}"
+	--description "llama.cpp AI engine with ROCm ${ROCM_VERSION}, model storage on ${POOL} (Qwen3-Coder-30B)"
 
 echo "[3/6] Adding GPU/ROCm passthrough devices..."
 cat >> "/etc/pve/lxc/${LXC_ID}.conf" <<'LXCCONF'
