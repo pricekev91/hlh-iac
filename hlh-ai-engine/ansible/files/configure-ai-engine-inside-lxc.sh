@@ -50,7 +50,8 @@ apt-get update
 apt-get install -y --no-install-recommends \
   build-essential git cmake pkg-config \
   python3 python3-pip curl wget unzip \
-  libopenblas-dev libssl-dev ca-certificates gnupg
+  libopenblas-dev libssl-dev ca-certificates gnupg \
+  openssh-server
 
 # --- 1b. ADD ROCM 7.14.0 REPO ---
 echo "[1/7] Adding ROCm ${ROCM_VERSION} repository..."
@@ -88,6 +89,18 @@ apt-get install -y --no-install-recommends \
 # Add root to render and video groups for GPU access
 usermod -aG render root
 usermod -aG video root
+
+# Allow root SSH login with password for lab access.
+# The root password is set manually after deploy.
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/99-root-login.conf <<'EOF'
+PermitRootLogin yes
+PasswordAuthentication yes
+KbdInteractiveAuthentication no
+UsePAM yes
+EOF
+systemctl enable ssh
+systemctl restart ssh || systemctl restart sshd
 
 # --- ROCm Environment Setup ---
 echo "[1/7] Setting up ROCm environment..."
