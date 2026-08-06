@@ -105,24 +105,24 @@ EOF
 systemctl enable ssh
 systemctl restart ssh || systemctl restart sshd
 
-# Install amdgpu-top via snap when the environment supports snapd.
-# In many LXC environments snapd cannot start due AppArmor/policy limitations,
-# so this is intentionally best-effort and must not fail the deploy.
-echo "[1/7] Installing amdgpu-top via Snap (best-effort)..."
-if systemd-detect-virt -c 2>/dev/null | grep -Eq 'lxc|container'; then
-  echo "WARNING: Container environment detected; skipping snap-based amdgpu-top install"
+# Install amdgpu-top via the upstream .deb release (works in LXC; snapd/AppArmor
+# do not function reliably in unprivileged/container environments).
+echo "[1/7] Installing amdgpu-top (.deb release, no snapd required)..."
+AMDGPU_TOP_VERSION="0.11.5"
+AMDGPU_TOP_DEB="amdgpu-top_${AMDGPU_TOP_VERSION}-1_amd64.deb"
+AMDGPU_TOP_URL="https://github.com/Umio-Yasuno/amdgpu_top/releases/download/v${AMDGPU_TOP_VERSION}/${AMDGPU_TOP_DEB}"
+AMDGPU_TOP_TMP="/tmp/${AMDGPU_TOP_DEB}"
+
+if command -v amdgpu_top >/dev/null 2>&1; then
+  echo "amdgpu_top already installed: $(command -v amdgpu_top)"
 else
-  if apt-get install -y --no-install-recommends snapd; then
-    ln -sfn /var/lib/snapd/snap /snap
-    if systemctl enable --now snapd >/dev/null 2>&1 && systemctl enable --now snapd.socket >/dev/null 2>&1; then
-      if ! snap list amdgpu-top >/dev/null 2>&1; then
-        snap install amdgpu-top || echo "WARNING: snap install amdgpu-top failed; continuing"
-      fi
-    else
-      echo "WARNING: snapd service could not be started; skipping amdgpu-top snap install"
-    fi
+  if wget -qO "$AMDGPU_TOP_TMP" "$AMDGPU_TOP_URL"; then
+    apt-get install -y "$AMDGPU_TOP_TMP" || {
+      echo "WARNING: amdgpu-top .deb install failed; continuing without it"
+    }
+    rm -f "$AMDGPU_TOP_TMP"
   else
-    echo "WARNING: snapd install failed; skipping amdgpu-top snap install"
+    echo "WARNING: Failed to download amdgpu-top .deb; continuing without it"
   fi
 fi
 
