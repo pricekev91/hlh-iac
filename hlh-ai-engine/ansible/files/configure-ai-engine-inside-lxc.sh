@@ -105,20 +105,25 @@ EOF
 systemctl enable ssh
 systemctl restart ssh || systemctl restart sshd
 
-# Install amdgpu-top via snap for server-friendly TUI monitoring.
-echo "[1/7] Installing amdgpu-top via Snap..."
-apt-get install -y --no-install-recommends snapd
-systemctl enable --now snapd
-systemctl enable --now snapd.socket
-ln -sfn /var/lib/snapd/snap /snap
-
-if ! snap list amdgpu-top >/dev/null 2>&1; then
-  snap install amdgpu-top
-fi
-
-if ! snap list amdgpu-top >/dev/null 2>&1; then
-  echo "ERROR: amdgpu-top snap install failed" >&2
-  exit 1
+# Install amdgpu-top via snap when the environment supports snapd.
+# In many LXC environments snapd cannot start due AppArmor/policy limitations,
+# so this is intentionally best-effort and must not fail the deploy.
+echo "[1/7] Installing amdgpu-top via Snap (best-effort)..."
+if systemd-detect-virt -c 2>/dev/null | grep -Eq 'lxc|container'; then
+  echo "WARNING: Container environment detected; skipping snap-based amdgpu-top install"
+else
+  if apt-get install -y --no-install-recommends snapd; then
+    ln -sfn /var/lib/snapd/snap /snap
+    if systemctl enable --now snapd >/dev/null 2>&1 && systemctl enable --now snapd.socket >/dev/null 2>&1; then
+      if ! snap list amdgpu-top >/dev/null 2>&1; then
+        snap install amdgpu-top || echo "WARNING: snap install amdgpu-top failed; continuing"
+      fi
+    else
+      echo "WARNING: snapd service could not be started; skipping amdgpu-top snap install"
+    fi
+  else
+    echo "WARNING: snapd install failed; skipping amdgpu-top snap install"
+  fi
 fi
 
 # --- ROCm Environment Setup ---
