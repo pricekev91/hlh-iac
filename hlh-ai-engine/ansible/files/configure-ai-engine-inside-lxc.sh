@@ -105,6 +105,22 @@ EOF
 systemctl enable ssh
 systemctl restart ssh || systemctl restart sshd
 
+# Install amdgpu-top via snap for server-friendly TUI monitoring.
+echo "[1/7] Installing amdgpu-top via Snap..."
+apt-get install -y --no-install-recommends snapd
+systemctl enable --now snapd
+systemctl enable --now snapd.socket
+ln -sfn /var/lib/snapd/snap /snap
+
+if ! snap list amdgpu-top >/dev/null 2>&1; then
+  snap install amdgpu-top
+fi
+
+if ! snap list amdgpu-top >/dev/null 2>&1; then
+  echo "ERROR: amdgpu-top snap install failed" >&2
+  exit 1
+fi
+
 # --- ROCm Environment Setup ---
 echo "[1/7] Setting up ROCm environment..."
 tee /etc/profile.d/rocm.env << EOF
