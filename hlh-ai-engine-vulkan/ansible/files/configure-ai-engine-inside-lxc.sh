@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # configure-ai-engine-inside-lxc.sh
-# Version: 1.0.1
+# Version: 1.0.2
 # Description: Bootstrap llama.cpp AI engine on Ubuntu 24.04 LXC with Vulkan passthrough
 # Target GPU: AMD Radeon 890M (gfx1150/Strix Halo) on Proxmox 9.x privileged LXC
 # Requirements: Run as root inside privileged LXC with GPU passthrough and /srv/ai/models bind mount
 # Changelog:
+#   1.0.2 - Use common service name "ai-engine" (matches hlh-ai-engine) so the
+#            shared hlh-switch-model.sh works regardless of host/CT
 #   1.0.1 - Fix cmake configure failure: add spirv-headers (SPIRV-Headers CMake config)
 #            and glslang-tools (glslangValidator) to base dependencies
 #   1.0.0 - Vulkan rewrite: drop ROCm/HIP entirely, build llama.cpp with
@@ -21,7 +23,7 @@ DEFAULT_MODEL_URL="https://huggingface.co/bartowski/Qwen2.5-Coder-32B-Instruct-G
 DEFAULT_MODEL_FILE="Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
 LLAMA_CPP_REPO="https://github.com/ggerganov/llama.cpp.git"
 LLAMA_CPP_DIR="/opt/llama.cpp"
-SERVICE_NAME="ai-engine-vulkan"
+SERVICE_NAME="ai-engine"
 SYSTEMD_SERVICE="/etc/systemd/system/${SERVICE_NAME}.service"
 SWITCH_SCRIPT="/usr/local/bin/switch-model.sh"
 
@@ -166,7 +168,7 @@ cat > "$SWITCH_SCRIPT" << 'EOS'
 #!/usr/bin/env bash
 # switch-model.sh
 # Version: 1.4.2
-# Description: Interactive model switcher for llama.cpp ai-engine-vulkan service
+# Description: Interactive model switcher for llama.cpp ai-engine service
 # Supports: model selection, ctx-size, KV cache quantization, MTP auto-detect
 # Changelog:
 #   1.0.0 - Initial version (model switch only)
@@ -188,7 +190,7 @@ cat > "$SWITCH_SCRIPT" << 'EOS'
 set -euo pipefail
 
 MODEL_DIR="/srv/ai/models"
-SERVICE="ai-engine-vulkan"
+SERVICE="ai-engine"
 SYSTEMD_SERVICE="/etc/systemd/system/${SERVICE}.service"
 MTP_DRAFT_N_MAX="${MTP_DRAFT_N_MAX:-3}"
 
@@ -438,7 +440,7 @@ echo ""
 echo "[Service status]"
 systemctl status "$SERVICE_NAME" --no-pager
 echo ""
-echo "[Bootstrap complete - v1.0.1]"
+echo "[Bootstrap complete - v1.0.2]"
 echo "  Native llama.cpp web UI : http://<container-ip>:80"
 echo "  Switch models with      : switch-model.sh"
 echo "  GPU backend             : Vulkan (RADV via Mesa, gfx1150 AMD Radeon 890M)"

@@ -28,7 +28,7 @@ This is what is already implemented and verified in this repository.
 
 ## Model Management
 
-- switch-model.sh v1.4.2 with MTP auto-detect, ctx-size 96K support (service: ai-engine-vulkan)
+- switch-model.sh v1.4.2 with MTP auto-detect, ctx-size 96K support (service: ai-engine)
 - Model storage: host `/srv/ai/models` bind-mounted to LXC `/srv/ai/models` (shared with hlh-ai-engine)
 - Default model pinned to `Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf`
 - Preferred models list: Qwen3-Coder-30B, Qwen3.6-35B-A3B, Qwen3-Coder-Next

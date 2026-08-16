@@ -161,14 +161,14 @@ KV cache VRAM estimates:
 
 | Check | Command |
 |-------|---------|
-| Service status | `systemctl status ai-engine-vulkan` |
+| Service status | `systemctl status ai-engine` |
 | Live health | `curl -s http://localhost:80/health` |
 | Model info | `curl -s http://localhost:80/v1/models` |
 | GPU usage | `amdgpu_top` (or `vulkaninfo --summary`) |
-| Logs | `journalctl -u ai-engine-vulkan -f` |
+| Logs | `journalctl -u ai-engine -f` |
 
 The `switch-model.sh` script waits up to 30 seconds for the service to come
-back up after a model switch, confirming `systemctl is-active --quiet ai-engine-vulkan`.
+back up after a model switch, confirming `systemctl is-active --quiet ai-engine`.
 
 ## Governance
 
