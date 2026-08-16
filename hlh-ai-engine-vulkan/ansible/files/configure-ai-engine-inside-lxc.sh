@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # configure-ai-engine-inside-lxc.sh
-# Version: 1.0.0
+# Version: 1.0.1
 # Description: Bootstrap llama.cpp AI engine on Ubuntu 24.04 LXC with Vulkan passthrough
 # Target GPU: AMD Radeon 890M (gfx1150/Strix Halo) on Proxmox 9.x privileged LXC
 # Requirements: Run as root inside privileged LXC with GPU passthrough and /srv/ai/models bind mount
 # Changelog:
+#   1.0.1 - Fix cmake configure failure: add spirv-headers (SPIRV-Headers CMake config)
+#            and glslang-tools (glslangValidator) to base dependencies
 #   1.0.0 - Vulkan rewrite: drop ROCm/HIP entirely, build llama.cpp with
 #            GGML_VULKAN=ON, install Mesa Vulkan stack (RADV), verify via vulkaninfo.
 #            /dev/kfd passthrough no longer required; /dev/dri only.
@@ -31,7 +33,8 @@ apt-get install -y --no-install-recommends \
   python3 python3-pip curl wget unzip \
   libopenblas-dev libssl-dev ca-certificates gnupg \
   openssh-server \
-  libvulkan1 libvulkan-dev mesa-vulkan-drivers vulkan-tools glslc
+  libvulkan1 libvulkan-dev mesa-vulkan-drivers vulkan-tools glslc \
+  spirv-headers glslang-tools
 
 # Add root to render and video groups for GPU access
 usermod -aG render root
@@ -435,7 +438,7 @@ echo ""
 echo "[Service status]"
 systemctl status "$SERVICE_NAME" --no-pager
 echo ""
-echo "[Bootstrap complete - v1.0.0]"
+echo "[Bootstrap complete - v1.0.1]"
 echo "  Native llama.cpp web UI : http://<container-ip>:80"
 echo "  Switch models with      : switch-model.sh"
 echo "  GPU backend             : Vulkan (RADV via Mesa, gfx1150 AMD Radeon 890M)"
