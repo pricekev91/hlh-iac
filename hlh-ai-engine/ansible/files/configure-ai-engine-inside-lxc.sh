@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # configure-ai-engine-inside-lxc.sh
-# Version: 0.9.0
+# Version: 0.9.2
 # Description: Bootstrap llama.cpp AI engine on Ubuntu 24.04 LXC with ROCm passthrough
 # Target GPU: AMD Radeon 890M (gfx1150/Strix Halo) on Proxmox 9.x privileged LXC
 # Requirements: Run as root inside privileged LXC with GPU passthrough and /srv/ai/models bind mount
 # Changelog:
+#   0.9.2 - switch-model.sh v1.7.0: DFlash2 option removed (bandwidth-starved
+#           iGPU can't benefit; draft not loadable on unpinned master). Spec
+#           menu is now MTP / ngram / none (standard) only.
 #   0.9.1 - Unpinned llama.cpp: build latest upstream master again (per user
 #           request). DFlash2 PR #27342 is still OPEN upstream, so DFlash2
 #           draft support disappears on next deploy unless LLAMA_CPP_PIN is
@@ -278,10 +281,13 @@ echo "[5/7] Creating interactive model switcher: $SWITCH_SCRIPT..."
 cat > "$SWITCH_SCRIPT" << 'EOS'
 #!/usr/bin/env bash
 # switch-model.sh
-# Version: 1.6.1
+# Version: 1.7.0
 # Description: Interactive model switcher for llama.cpp ai-engine service
-# Supports: model selection, ctx-size, KV cache quantization, speculative decoding method (MTP draft / ngram / DFlash2 / none)
+# Supports: model selection, ctx-size, KV cache quantization, speculative decoding method (MTP draft / ngram / none)
 # Changelog:
+#   1.7.0 - Removed DFlash2 support (draft model unsupported on Strix Point iGPU
+#           and not loadable on unpinned upstream master; PR #27342 still open).
+#           Menu option for no speculation relabeled "none (standard)".
 #   1.6.1 - Fixed readiness check: probe /health HTTP endpoint instead of
 #           relying on `systemctl is-active` (which stays green while the
 #           service crash-loops during "activating"). Aborts on failed state.
@@ -331,34 +337,9 @@ NGRAM_N_MATCH="${NGRAM_N_MATCH:-24}"
 NGRAM_N_MIN="${NGRAM_N_MIN:-48}"
 NGRAM_N_MAX="${NGRAM_N_MAX:-64}"
 
-# DFlash draft n-max (recommended 7 for Qwen3.8-27B-DFlash2; override via env)
-DFLASH_DRAFT_N_MAX="${DFLASH_DRAFT_N_MAX:-7}"
-
 # ─── MTP Detection ─────────────────────────────────────────────────────────────
 is_mtp_model() {
   [[ "$(basename "$1")" =~ [Mm][Tt][Pp] ]]
-}
-
-# ─── DFlash Draft Detection ────────────────────────────────────────────────────
-# DFlash/DFlash2 draft GGUFs carry the marker in the filename, e.g.
-# Qwen3.8-27B-DFlash2-Q2_K.gguf (distilled flash speculative draft model).
-is_dflash_model() {
-  [[ "$(basename "$1")" =~ [Dd][Ff]lash ]]
-}
-
-# ─── Model family pairing ──────────────────────────────────────────────────────
-# Returns the family prefix of a model filename (everything before the first
-# quantization / UD / DFlash marker), e.g. "Qwen3.8-27B" for both
-# Qwen3.8-27B-Q4_K_M.gguf and Qwen3.8-27B-DFlash2-Q2_K.gguf.
-model_family() {
-  local base
-  base="$(basename "$1")"
-  base="${base%.gguf}"
-  base="${base%%-[Qq][0-9]*}"
-  base="${base%%-[Ii][Qq]*}"
-  base="${base%%-[Uu][Dd]*}"
-  base="${base%%-[Dd][Ff]lash*}"
-  echo "$base"
 }
 
 # ─── MoE Detection ─────────────────────────────────────────────────────────────
@@ -459,7 +440,6 @@ echo "  Currently active: $CUR_MODEL"
 echo "  ctx-size        : ${CUR_CTX:-(not set)}"
 echo "  KV cache (K/V)  : ${CUR_KV_K} / ${CUR_KV_V}"
 echo "  Spec decode     : $CUR_SPEC"
-echo "  Draft model     : ${CUR_DRAFT:-none}"
 echo ""
 
 # ─── Model selection ───────────────────────────────────────────────────────────
@@ -473,8 +453,6 @@ echo "Available models:"
 for i in "${!MODELS[@]}"; do
   if is_mtp_model "${MODELS[$i]}"; then
     printf "  %2d) %s  [MTP]\n" $((i+1)) "${MODELS[$i]}"
-  elif is_dflash_model "${MODELS[$i]}"; then
-    printf "  %2d) %s  [DFlash]\n" $((i+1)) "${MODELS[$i]}"
   else
     printf "  %2d) %s\n" $((i+1)) "${MODELS[$i]}"
   fi
@@ -486,20 +464,6 @@ if ! [[ "$CHOICE" =~ ^[0-9]+$ ]] || (( CHOICE < 1 || CHOICE > ${#MODELS[@]} )); 
   exit 1
 fi
 NEW_MODEL="${MODELS[$((CHOICE-1))]}"
-
-# ─── DFlash draft pairing ──────────────────────────────────────────────────────
-# Look for a DFlash draft model sharing the selected model's family (e.g.
-# Qwen3.8-27B-Q4_K_M.gguf pairs with Qwen3.8-27B-DFlash2-Q2_K.gguf).
-DFLASH_DRAFT=""
-if ! is_dflash_model "$NEW_MODEL"; then
-  FAMILY="$(model_family "$NEW_MODEL")"
-  for m in "${MODELS[@]}"; do
-    if is_dflash_model "$m" && [[ "$(model_family "$m")" == "$FAMILY" ]]; then
-      DFLASH_DRAFT="$m"
-      break
-    fi
-  done
-fi
 
 # ─── Context size selection ────────────────────────────────────────────────────
 echo ""
@@ -550,45 +514,29 @@ esac
 
 # ─── Speculative decoding method selection ────────────────────────────────────
 # MTP models can use their MTP heads (draft-mtp) or self-speculative ngram
-# variants. Non-MTP models that have a same-family DFlash draft can use
-# DFlash2 (distilled flash draft model). Otherwise no spec flags are emitted.
-if is_mtp_model "$NEW_MODEL" || [ -n "$DFLASH_DRAFT" ]; then
-  if is_mtp_model "$NEW_MODEL"; then
-    # Auto-select MTP draft n-max: 5 for MoE, 3 for dense (unless overridden)
-    if [ -z "$MTP_DRAFT_N_MAX" ]; then
-      if is_moe_model "$NEW_MODEL"; then
-        MTP_DRAFT_N_MAX=5
-      else
-        MTP_DRAFT_N_MAX=3
-      fi
+# variants. Standard (non-MTP) models emit no spec flags (option "none").
+if is_mtp_model "$NEW_MODEL"; then
+  # Auto-select MTP draft n-max: 5 for MoE, 3 for dense (unless overridden)
+  if [ -z "$MTP_DRAFT_N_MAX" ]; then
+    if is_moe_model "$NEW_MODEL"; then
+      MTP_DRAFT_N_MAX=5
+    else
+      MTP_DRAFT_N_MAX=3
     fi
-    DEFAULT_SPEC=1
-  elif [ -n "$DFLASH_DRAFT" ]; then
-    DEFAULT_SPEC=6
   fi
+  DEFAULT_SPEC=1
   echo ""
   echo "Speculative decoding method:"
-  if is_mtp_model "$NEW_MODEL"; then
-    echo "   1) MTP draft     — use the model's MTP heads (default, n-max $MTP_DRAFT_N_MAX)"
-  else
-    echo "   1) MTP draft     — (not available: model is not an MTP model)"
-  fi
+  echo "   1) MTP draft     — use the model's MTP heads (default, n-max $MTP_DRAFT_N_MAX)"
   echo "   2) ngram-mod     — n-gram matching, self-speculative (tunable)"
   echo "   3) ngram-map-k4v — n-gram keys + 4 m-gram values (fast self-speculation)"
   echo "   4) ngram-map-k   — n-gram keys only"
   echo "   5) ngram-simple  — simple n-gram lookup"
-  if [ -n "$DFLASH_DRAFT" ]; then
-    echo "   6) DFlash2       — distilled flash draft: $(basename "$DFLASH_DRAFT")"
-  fi
-  echo "   7) none          — disable speculative decoding"
+  echo "   6) none (standard) — disable speculative decoding"
 
   read -rp "Select method [default: $DEFAULT_SPEC]: " SPEC_CHOICE
   case "${SPEC_CHOICE:-$DEFAULT_SPEC}" in
     1)
-      if ! is_mtp_model "$NEW_MODEL"; then
-        echo "ERROR: MTP draft requires an MTP model."
-        exit 1
-      fi
       NEW_METHOD="draft-mtp"
       SPEC_FLAGS="--spec-type draft-mtp --spec-draft-n-max $MTP_DRAFT_N_MAX"
       ;;
@@ -617,15 +565,7 @@ if is_mtp_model "$NEW_MODEL" || [ -n "$DFLASH_DRAFT" ]; then
       NEW_METHOD="ngram-simple"
       SPEC_FLAGS="--spec-type ngram-simple"
       ;;
-    6)
-      if [ -z "$DFLASH_DRAFT" ]; then
-        echo "ERROR: No DFlash draft model found for $NEW_MODEL"
-        exit 1
-      fi
-      NEW_METHOD="dflash"
-      SPEC_FLAGS="--spec-type draft-dflash --model-draft $DFLASH_DRAFT --spec-draft-n-max $DFLASH_DRAFT_N_MAX"
-      ;;
-    7|*)
+    6|*)
       NEW_METHOD="none"
       SPEC_FLAGS=""
       ;;
@@ -686,9 +626,6 @@ if [ "$OK" = "1" ]; then
   echo "  [✓] ctx-size    : $NEW_CTX"
   echo "  [✓] KV cache    : $NEW_KV (K and V)"
   echo "  [✓] Spec decode : $NEW_METHOD"
-  if [ -n "$DFLASH_DRAFT" ]; then
-    echo "  [✓] Draft model : $DFLASH_DRAFT"
-  fi
   echo "  [✓] Service     : $SERVICE running (health OK)"
   echo ""
   echo "  Web UI ready at       : http://$(hostname -I | awk '{print $1}'):80"
@@ -753,7 +690,7 @@ echo ""
 echo "[Service status]"
 systemctl status "$SERVICE_NAME" --no-pager
 echo ""
-echo "[Bootstrap complete - v0.9.0]"
+echo "[Bootstrap complete - v0.9.2]"
 echo "  Native llama.cpp web UI : http://<container-ip>:80"
 echo "  Switch models with      : switch-model.sh"
 echo "  GPU device              : gfx1150 (AMD Radeon 890M)"

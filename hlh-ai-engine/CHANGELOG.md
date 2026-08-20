@@ -9,15 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- DFlash2 speculative decoding support (build-time): llama.cpp commit `5ecbe1a`
-  (PR #27342, now unmerged/open upstream) and
-  switch-model.sh v1.6.1 with DFlash2 draft pairing (`--spec-type draft-dflash`) and
-  real readiness check (`/health` probe, crash-loop detection)
+- switch-model.sh v1.6.1: real readiness check (`/health` probe, crash-loop detection)
 - Required-model enforcement: DFlash2 draft GGUF
   `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` is downloaded from
   `z-lab/Qwen3.8-27B-DFlash2-GGUF` if missing (note: no Q2_K variant exists upstream;
   a truncated Q2_K file caused `expected 81, got 58` load failures)
 - `dl.sh` resumable HuggingFace downloader written to model dir
+
+### Removed
+
+- switch-model.sh v1.7.0: DFlash2 spec option removed (Strix Point iGPU is
+  bandwidth-starved so block-verify speculation can't win; draft also not
+  loadable on unpinned master since PR #27342 remains open upstream). Spec
+  menu is now MTP / ngram / none (standard) only.
 
 ### Changed
 
@@ -40,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   because its Gated Delta Net attention fused kernels are not supported on HIP
   (`fused Gated Delta Net not supported, set to disabled`); Qwen3.6-27B+MTP remains
   the fastest config on this iGPU (~7.6-7.8 tok/s)
+- DFlash2 draft GGUF (`Qwen3.8-27B-DFlash2-Q4_K_M.gguf`) no longer loads: PR #27342
+  is unmerged upstream and the llama.cpp build is unpinned. The file is kept on
+  storage for future use (e.g. MI50/60 with a pinned fork)
 
 ## [0.3.1] - 2026-06
 

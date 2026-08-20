@@ -48,19 +48,20 @@ This is what is already implemented and verified in this repository.
 
 - Ansible inventory: `ansible/inventories/hlh-ai-engine.yml`
 - Playbook: `ansible/playbooks/hlh-ai-engine.yml`
-- Bootstrap script: `ansible/files/configure-ai-engine-inside-lxc.sh` (v0.9.0)
+- Bootstrap script: `ansible/files/configure-ai-engine-inside-lxc.sh` (v0.9.2)
 - SSH key-based auth: `~/.ssh/id_ed25519`
 - Reconfiguration via `configure-hlh-ai-engine.sh` with `--host` and `--offline` flags
 
-## Speculative Decoding (DFlash2 / MTP)
+## Speculative Decoding (MTP / standard)
 
 - llama.cpp builds latest upstream master (pin removed 0.9.1; DFlash2 PR #27342
   still open upstream, so the DFlash2 draft requires re-pinning via
   `LLAMA_CPP_PIN` in the configure script — recipe kept in step 2 comments)
-- `switch-model.sh` v1.6.1: DFlash2 option auto-pairs same-family draft GGUF
-  (`Qwen3.8-27B-DFlash2-Q4_K_M.gguf`, from `z-lab/Qwen3.8-27B-DFlash2-GGUF`),
-  readiness check probes `/health` (crash-loop detection)
-- DFlash2 draft verified working: acceptance 0.35-0.92, mean run 3.5-7.0
+- `switch-model.sh` v1.7.0: MTP / ngram / none (standard) only; DFlash2 option
+  removed (bandwidth-starved iGPU can't benefit). Readiness check probes
+  `/health` (crash-loop detection)
+- DFlash2 draft GGUF (`Qwen3.8-27B-DFlash2-Q4_K_M.gguf`) kept on storage for
+  future use (e.g. MI50/60 with a pinned fork)
 - Known limitation: Qwen3.8-27B caps at ~4.3 tok/s on this iGPU (Gated Delta Net
   fused kernels unsupported on HIP); Qwen3.6-27B+MTP is the fast config (~7.6-7.8)
 
