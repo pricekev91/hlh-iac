@@ -5,6 +5,10 @@
 # Target GPU: AMD Radeon 890M (gfx1150/Strix Halo) on Proxmox 9.x privileged LXC
 # Requirements: Run as root inside privileged LXC with GPU passthrough and /srv/ai/models bind mount
 # Changelog:
+#   0.9.1 - Unpinned llama.cpp: build latest upstream master again (per user
+#           request). DFlash2 PR #27342 is still OPEN upstream, so DFlash2
+#           draft support disappears on next deploy unless LLAMA_CPP_PIN is
+#           set to the PR commit again. Pin recipe left in step 2 comments.
 #   0.9.0 - Pin llama.cpp to DFlash2 commit 5ecbe1a (PR #27342, 2026-08-18) instead of
 #           floating master: deterministic builds, DFlash2 draft-model support
 #           switch-model.sh bumped to v1.6.1: adds DFlash2 speculative decoding option,
@@ -45,7 +49,10 @@ DEFAULT_MODEL_URL="https://huggingface.co/bartowski/Qwen2.5-Coder-32B-Instruct-G
 DEFAULT_MODEL_FILE="Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
 LLAMA_CPP_REPO="https://github.com/ggerganov/llama.cpp.git"
 LLAMA_CPP_DIR="/opt/llama.cpp"
-LLAMA_CPP_PIN="5ecbe1ac17ec0484c5b44af0bd580cdc9c428ed4"  # DFlash2 support (PR #27342, 2026-08-18)
+# NOTE: builds latest master. DFlash2 (PR #27342) and TurboQuant are NOT in
+# upstream master yet; to use them, set LLAMA_CPP_PIN to a commit containing
+# the needed PR(s) and uncomment the pinned fetch/checkout in step 2.
+# LLAMA_CPP_PIN="5ecbe1ac17ec0484c5b44af0bd580cdc9c428ed4"  # DFlash2 PR #27342 (open, unmerged)
 SERVICE_NAME="ai-engine"
 SYSTEMD_SERVICE="/etc/systemd/system/${SERVICE_NAME}.service"
 SWITCH_SCRIPT="/usr/local/bin/switch-model.sh"
@@ -158,17 +165,20 @@ echo "HIP clang path: ${HIPCXX_PATH}"
 echo "HIP root path:  ${HIP_PATH_VAL}"
 [ -f "${HIPCXX_PATH}" ] || { echo "ERROR: HIP clang not found at ${HIPCXX_PATH}"; exit 1; }
 
-# --- 2. BUILD LLAMA.CPP (ROCm only) ---
-echo "[2/7] Cloning and building llama.cpp (ROCm gfx1150, pinned ${LLAMA_CPP_PIN})..."
+# --- 2. BUILD LLAMA.CPP (ROCm only, latest master) ---
+echo "[2/7] Cloning and building llama.cpp (ROCm gfx1150, latest master)..."
 if [ ! -d "$LLAMA_CPP_DIR" ]; then
   git clone --depth=1 "$LLAMA_CPP_REPO" "$LLAMA_CPP_DIR"
 fi
 
-# Deterministic pin: fetch the exact DFlash2 commit instead of floating master.
-# `git pull` was removed because the checkout may be on a detached branch/pin.
-git -C "$LLAMA_CPP_DIR" fetch --depth=1 origin "$LLAMA_CPP_PIN" || \
-  git -C "$LLAMA_CPP_DIR" fetch origin "$LLAMA_CPP_PIN"
-git -C "$LLAMA_CPP_DIR" checkout -f "$LLAMA_CPP_PIN"
+# Move back onto master before pulling (the checkout may be on a detached
+# HEAD from a previous pinned build, where plain `git pull` would fail).
+git -C "$LLAMA_CPP_DIR" checkout -f master 2>/dev/null || true
+git -C "$LLAMA_CPP_DIR" pull --ff-only
+
+# To pin a specific commit/PR (e.g. DFlash2 PR #27342, TurboQuant), uncomment:
+# git -C "$LLAMA_CPP_DIR" fetch --depth=1 origin "$LLAMA_CPP_PIN"
+# git -C "$LLAMA_CPP_DIR" checkout -f "$LLAMA_CPP_PIN"
 
 cd "$LLAMA_CPP_DIR"
 

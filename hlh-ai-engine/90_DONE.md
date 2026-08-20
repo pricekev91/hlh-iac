@@ -54,7 +54,9 @@ This is what is already implemented and verified in this repository.
 
 ## Speculative Decoding (DFlash2 / MTP)
 
-- llama.cpp pinned to `5ecbe1a` (PR #27342) for DFlash2 draft-model support
+- llama.cpp builds latest upstream master (pin removed 0.9.1; DFlash2 PR #27342
+  still open upstream, so the DFlash2 draft requires re-pinning via
+  `LLAMA_CPP_PIN` in the configure script — recipe kept in step 2 comments)
 - `switch-model.sh` v1.6.1: DFlash2 option auto-pairs same-family draft GGUF
   (`Qwen3.8-27B-DFlash2-Q4_K_M.gguf`, from `z-lab/Qwen3.8-27B-DFlash2-GGUF`),
   readiness check probes `/health` (crash-loop detection)

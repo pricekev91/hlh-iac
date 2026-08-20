@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- DFlash2 speculative decoding support: llama.cpp pinned to commit `5ecbe1a` (PR #27342) and
+- DFlash2 speculative decoding support (build-time): llama.cpp commit `5ecbe1a`
+  (PR #27342, now unmerged/open upstream) and
   switch-model.sh v1.6.1 with DFlash2 draft pairing (`--spec-type draft-dflash`) and
   real readiness check (`/health` probe, crash-loop detection)
 - Required-model enforcement: DFlash2 draft GGUF
@@ -20,11 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- llama.cpp build unpinned: tracks latest upstream master again (deterministic
+  pin removed at user request; pin recipe kept as comments in the configure
+  script). NOTE: DFlash2 PR #27342 is still open upstream, so DFlash2 draft
+  support is lost on the next deploy unless the pin is restored
 - Upgrade ROCm from 7.2.3 to 7.14.0 (native gfx1150 rocBLAS support)
 - Switch llama-server from port 8080 (nginx) to port 80 (native web UI)
 - Update default model to Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
-- llama.cpp build is now pinned to `LLAMA_CPP_PIN` (deterministic fetch+checkout)
-  instead of floating `git pull` master
 
 ### Fixed
 
