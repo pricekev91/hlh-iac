@@ -1,33 +1,41 @@
 #!/usr/bin/env bash
 # configure-ai-engine-inside-lxc.sh
-# Version: 0.8.3
+# Version: 0.9.0
 # Description: Bootstrap llama.cpp AI engine on Ubuntu 24.04 LXC with ROCm passthrough
 # Target GPU: AMD Radeon 890M (gfx1150/Strix Halo) on Proxmox 9.x privileged LXC
 # Requirements: Run as root inside privileged LXC with GPU passthrough and /srv/ai/models bind mount
 # Changelog:
-#   0.1.0 - Initial version
-#   0.2.0 - Fixed ROCm repo setup and package names
-#   0.3.0 - Added CMake ROCm path flags
-#   0.4.0 - Added rocm-hip-runtime-dev, Vulkan support, hipcc verification
-#   0.5.0 - Fixed HIP compiler: use HIPCXX env var pointing to clang, not hipcc wrapper
-#   0.6.0 - Added glslc, pre-build checks, fixed LD_LIBRARY_PATH unbound variable
-#   0.6.2 - Disabled Vulkan (missing SPIRV-Headers); ROCm only
-#   0.7.0 - Upgraded to ROCm 7.14.0 for native gfx1150 (Strix Halo) rocBLAS support
-#            Fixed -ngl flag, removed --flash-attn, added render/video group for root
-#            Fixed KFD cgroup device major (511, not 238) documented in create script
-#   0.8.0 - switch-model.sh v1.3.0: full ctx-size + KV cache + MTP auto-detect
-#            MTP models detected by filename (case-insensitive 'MTP' match)
-#            ExecStart rewritten atomically via awk on every switch (no sed fragility)
-#   0.8.1 - Reuse existing .gguf on mounted /srv/ai/models during bootstrap
-#            Download default model only when model directory is empty
+#   0.9.0 - Pin llama.cpp to DFlash2 commit 5ecbe1a (PR #27342, 2026-08-18) instead of
+#           floating master: deterministic builds, DFlash2 draft-model support
+#           switch-model.sh bumped to v1.6.1: adds DFlash2 speculative decoding option,
+#           auto-pairs same-family DFlash draft GGUF, and a real readiness check that
+#           probes /health instead of trusting `systemctl is-active` during crash loops
+#           Ensures DFlash2 draft GGUF (Qwen3.8-27B-DFlash2-Q4_K_M.gguf) is present,
+#           downloads from z-lab/Qwen3.8-27B-DFlash2-GGUF if missing
+#           Writes dl.sh (resumable curl downloader) to model dir
+#   0.8.3 - switch-model.sh v1.4.2: added 72K (73728) and 96K (98304) ctx-size options
+#            VRAM budget table updated with 72K and 96K KV cache estimates
 #   0.8.2 - Fixed triple-nested rewrite_execstart bug in switch-model.sh (was never callable)
 #            Updated default model to Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
 #            Updated PREFERRED_MODELS list to include Qwen3-Coder model
 #            switch-model.sh now copied to /srv/ai/models/ to keep both copies in sync
 #            Added startup wait loop + web UI URL confirmation after model switch
 #            switch-model.sh bumped to v1.4.1
-#   0.8.3 - switch-model.sh v1.4.2: added 72K (73728) and 96K (98304) ctx-size options
-#            VRAM budget table updated with 72K and 96K KV cache estimates
+#   0.8.1 - Reuse existing .gguf on mounted /srv/ai/models during bootstrap
+#            Download default model only when model directory is empty
+#   0.8.0 - switch-model.sh v1.3.0: full ctx-size + KV cache + MTP auto-detect
+#            MTP models detected by filename (case-insensitive 'MTP' match)
+#            ExecStart rewritten atomically via awk on every switch (no sed fragility)
+#   0.7.0 - Upgraded to ROCm 7.14.0 for native gfx1150 (Strix Halo) rocBLAS support
+#            Fixed -ngl flag, removed --flash-attn, added render/video group for root
+#            Fixed KFD cgroup device major (511, not 238) documented in create script
+#   0.6.2 - Disabled Vulkan (missing SPIRV-Headers); ROCm only
+#   0.6.0 - Added glslc, pre-build checks, fixed LD_LIBRARY_PATH unbound variable
+#   0.5.0 - Fixed HIP compiler: use HIPCXX env var pointing to clang, not hipcc wrapper
+#   0.4.0 - Added rocm-hip-runtime-dev, Vulkan support, hipcc verification
+#   0.3.0 - Added CMake ROCm path flags
+#   0.2.0 - Fixed ROCm repo setup and package names
+#   0.1.0 - Initial version
 
 set -euo pipefail
 
@@ -37,12 +45,15 @@ DEFAULT_MODEL_URL="https://huggingface.co/bartowski/Qwen2.5-Coder-32B-Instruct-G
 DEFAULT_MODEL_FILE="Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
 LLAMA_CPP_REPO="https://github.com/ggerganov/llama.cpp.git"
 LLAMA_CPP_DIR="/opt/llama.cpp"
+LLAMA_CPP_PIN="5ecbe1ac17ec0484c5b44af0bd580cdc9c428ed4"  # DFlash2 support (PR #27342, 2026-08-18)
 SERVICE_NAME="ai-engine"
 SYSTEMD_SERVICE="/etc/systemd/system/${SERVICE_NAME}.service"
 SWITCH_SCRIPT="/usr/local/bin/switch-model.sh"
 GFX_VERSION="11.5.0"   # gfx1150 native — rocBLAS 7.14.0 supports it
 ROCM_PATH="/opt/rocm"
 ROCM_VERSION="7.14.0"
+DFLASH2_DRAFT_FILE="Qwen3.8-27B-DFlash2-Q4_K_M.gguf"
+DFLASH2_DRAFT_URL="https://huggingface.co/z-lab/Qwen3.8-27B-DFlash2-GGUF/resolve/main/Qwen3.8-27B-DFlash2-Q4_K_M.gguf?download=true"
 
 # --- 1. BASE DEPENDENCIES ---
 echo "[1/7] Installing base dependencies..."
@@ -148,12 +159,16 @@ echo "HIP root path:  ${HIP_PATH_VAL}"
 [ -f "${HIPCXX_PATH}" ] || { echo "ERROR: HIP clang not found at ${HIPCXX_PATH}"; exit 1; }
 
 # --- 2. BUILD LLAMA.CPP (ROCm only) ---
-echo "[2/7] Cloning and building llama.cpp (ROCm gfx1150)..."
+echo "[2/7] Cloning and building llama.cpp (ROCm gfx1150, pinned ${LLAMA_CPP_PIN})..."
 if [ ! -d "$LLAMA_CPP_DIR" ]; then
   git clone --depth=1 "$LLAMA_CPP_REPO" "$LLAMA_CPP_DIR"
-else
-  git -C "$LLAMA_CPP_DIR" pull
 fi
+
+# Deterministic pin: fetch the exact DFlash2 commit instead of floating master.
+# `git pull` was removed because the checkout may be on a detached branch/pin.
+git -C "$LLAMA_CPP_DIR" fetch --depth=1 origin "$LLAMA_CPP_PIN" || \
+  git -C "$LLAMA_CPP_DIR" fetch origin "$LLAMA_CPP_PIN"
+git -C "$LLAMA_CPP_DIR" checkout -f "$LLAMA_CPP_PIN"
 
 cd "$LLAMA_CPP_DIR"
 
@@ -204,6 +219,18 @@ else
   fi
 fi
 
+# --- 3b. ENSURE REQUIRED MODELS (DFlash2 draft) ---
+for ENTRY in "${DFLASH2_DRAFT_FILE}|${DFLASH2_DRAFT_URL}"; do
+  FILE="${ENTRY%%|*}"
+  URL="${ENTRY#*|}"
+  if [ -f "${MODEL_DIR}/${FILE}" ]; then
+    echo "Required model present: ${FILE}"
+  else
+    echo "Downloading required model: ${FILE}"
+    wget -c -O "${MODEL_DIR}/${FILE}" "$URL"
+  fi
+done
+
 # --- 4. SYSTEMD SERVICE ---
 echo "[4/7] Creating systemd service for llama-server..."
 cat > "$SYSTEMD_SERVICE" << UNIT
@@ -241,10 +268,29 @@ echo "[5/7] Creating interactive model switcher: $SWITCH_SCRIPT..."
 cat > "$SWITCH_SCRIPT" << 'EOS'
 #!/usr/bin/env bash
 # switch-model.sh
-# Version: 1.4.2
+# Version: 1.6.1
 # Description: Interactive model switcher for llama.cpp ai-engine service
-# Supports: model selection, ctx-size, KV cache quantization, MTP auto-detect
+# Supports: model selection, ctx-size, KV cache quantization, speculative decoding method (MTP draft / ngram / DFlash2 / none)
 # Changelog:
+#   1.6.1 - Fixed readiness check: probe /health HTTP endpoint instead of
+#           relying on `systemctl is-active` (which stays green while the
+#           service crash-loops during "activating"). Aborts on failed state.
+#   1.6.0 - Added DFlash2 (distilled flash draft model) speculative decoding
+#           Auto-pairs the selected target with a same-family DFlash draft GGUF
+#           (filename containing 'DFlash', e.g. Qwen3.8-27B-DFlash2-Q2_K.gguf)
+#           Emits --model-draft + --spec-type draft-dflash + --spec-draft-n-max
+#           DFlash draft n-max default 7 (override via DFLASH_DRAFT_N_MAX env)
+#           Model list tags DFlash drafts with [DFlash]; banner shows draft model
+#   1.5.3 - Auto-select MTP draft n-max by model type: 5 for MoE (e.g. Qwen3.6-35B-A3B-MTP),
+#           3 for dense (e.g. Qwen3.6-27B-MTP). ngram option kept for both.
+#   1.5.2 - Added note: dense models (Qwen3.6-27B-MTP) benchmark better with n-max 3 than 5
+#   1.5.1 - Default MTP draft n-max changed 3 -> 5 (benchmarked best on Qwen3.6-35B-A3B MTP Q4_K_M)
+#   1.5.0 - Added speculative decoding method selection for MTP models
+#           Options: draft-mtp (default), ngram-mod (tunable), ngram-map-k4v,
+#                    ngram-map-k, ngram-simple, none
+#           ngram-mod params tunable: n-match / n-min / n-max
+#           Current state banner now shows --spec-type instead of MTP yes/no
+#           Fixed duplicate --parallel 1 in generated ExecStart
 #   1.0.0 - Initial version (model switch only)
 #   1.1.0 - Added ctx-size selection and KV cache quantization prompt
 #   1.2.0 - Added VRAM budget reference table to banner
@@ -266,24 +312,65 @@ set -euo pipefail
 MODEL_DIR="/srv/ai/models"
 SERVICE="ai-engine"
 SYSTEMD_SERVICE="/etc/systemd/system/${SERVICE}.service"
-MTP_DRAFT_N_MAX="${MTP_DRAFT_N_MAX:-3}"
+# MTP draft n-max: 5 for MoE models (e.g. Qwen3.6-35B-A3B-MTP), 3 for dense
+# (e.g. Qwen3.6-27B-MTP). Leave unset to auto-select by model type; override via env.
+MTP_DRAFT_N_MAX="${MTP_DRAFT_N_MAX:-}"
+
+# ngram-mod tuning defaults (match llama.cpp build defaults)
+NGRAM_N_MATCH="${NGRAM_N_MATCH:-24}"
+NGRAM_N_MIN="${NGRAM_N_MIN:-48}"
+NGRAM_N_MAX="${NGRAM_N_MAX:-64}"
+
+# DFlash draft n-max (recommended 7 for Qwen3.8-27B-DFlash2; override via env)
+DFLASH_DRAFT_N_MAX="${DFLASH_DRAFT_N_MAX:-7}"
 
 # ─── MTP Detection ─────────────────────────────────────────────────────────────
 is_mtp_model() {
   [[ "$(basename "$1")" =~ [Mm][Tt][Pp] ]]
 }
 
+# ─── DFlash Draft Detection ────────────────────────────────────────────────────
+# DFlash/DFlash2 draft GGUFs carry the marker in the filename, e.g.
+# Qwen3.8-27B-DFlash2-Q2_K.gguf (distilled flash speculative draft model).
+is_dflash_model() {
+  [[ "$(basename "$1")" =~ [Dd][Ff]lash ]]
+}
+
+# ─── Model family pairing ──────────────────────────────────────────────────────
+# Returns the family prefix of a model filename (everything before the first
+# quantization / UD / DFlash marker), e.g. "Qwen3.8-27B" for both
+# Qwen3.8-27B-Q4_K_M.gguf and Qwen3.8-27B-DFlash2-Q2_K.gguf.
+model_family() {
+  local base
+  base="$(basename "$1")"
+  base="${base%.gguf}"
+  base="${base%%-[Qq][0-9]*}"
+  base="${base%%-[Ii][Qq]*}"
+  base="${base%%-[Uu][Dd]*}"
+  base="${base%%-[Dd][Ff]lash*}"
+  echo "$base"
+}
+
+# ─── MoE Detection ─────────────────────────────────────────────────────────────
+# Qwen MoE models are named like "<total>B-A<active>B-..." (e.g. 35B-A3B).
+# Dense models (e.g. 27B-MTP) have no active-param marker.
+is_moe_model() {
+  [[ "$(basename "$1")" =~ -A[0-9]+B- ]]
+}
+
 # ─── Atomic ExecStart rewrite ──────────────────────────────────────────────────
 # Rewrites the full ExecStart block in the systemd unit with all chosen params.
-# Using awk avoids fragile multi-sed chaining and handles add/remove of MTP flags.
+# Using awk avoids fragile multi-sed chaining and handles add/remove of spec flags.
+# spec_flags is "" for no speculative decoding, otherwise the full flag string
+# (e.g. "--spec-type ngram-mod --spec-ngram-mod-n-match 24 ...").
 rewrite_execstart() {
-  local model="$1" ctx="$2" kv="$3" mtp="$4"
+  local model="$1" ctx="$2" kv="$3" spec_flags="$4"
   local tmp_file
   tmp_file="$(mktemp)"
 
   cp "$SYSTEMD_SERVICE" "${SYSTEMD_SERVICE}.backup.$(date +%s)"
 
-  awk -v model="$model" -v ctx="$ctx" -v kv="$kv" -v mtp="$mtp" -v mtpn="$MTP_DRAFT_N_MAX" '
+  awk -v model="$model" -v ctx="$ctx" -v kv="$kv" -v spec_flags="$spec_flags" '
     BEGIN { in_block=0; done=0 }
     /^ExecStart=.*llama-server/ {
       done=1
@@ -293,15 +380,14 @@ rewrite_execstart() {
       print "  --ctx-size " ctx " \\"
       print "  -ngl 48 \\"
       print "  --batch-size 128 \\"
-      print "  --parallel 1 \\"
       print "  --cache-type-k " kv " \\"
-      if (mtp == "1") {
+      if (spec_flags != "") {
         print "  --cache-type-v " kv " \\"
-        print "  --spec-type draft-mtp \\"
-        print "  --spec-draft-n-max " mtpn " \\"
+        print "  " spec_flags " \\"
         print "  --parallel 1"
       } else {
-        print "  --cache-type-v " kv
+        print "  --cache-type-v " kv " \\"
+        print "  --parallel 1"
       }
       in_block=1
       next
@@ -354,13 +440,16 @@ CUR_MODEL=$(grep -- '--model '         "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;
 CUR_CTX=$(  grep -- '--ctx-size '      "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--ctx-size")      print $(i+1)}') || CUR_CTX="(not set)"
 CUR_KV_K=$( grep -- '--cache-type-k '  "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--cache-type-k")  print $(i+1)}') || CUR_KV_K="(not set)"
 CUR_KV_V=$( grep -- '--cache-type-v '  "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--cache-type-v")  print $(i+1)}') || CUR_KV_V="(not set)"
-if is_mtp_model "${CUR_MODEL:-}"; then CUR_MTP="yes"; else CUR_MTP="no"; fi
+CUR_SPEC=$( grep -- '--spec-type '     "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--spec-type")     print $(i+1)}') || CUR_SPEC="none"
+CUR_SPEC="${CUR_SPEC:-none}"
+CUR_DRAFT=$(grep -- '--model-draft '  "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--model-draft")  print $(i+1)}') || CUR_DRAFT=""
 
 echo "  Model directory : $MODEL_DIR"
 echo "  Currently active: $CUR_MODEL"
 echo "  ctx-size        : ${CUR_CTX:-(not set)}"
 echo "  KV cache (K/V)  : ${CUR_KV_K} / ${CUR_KV_V}"
-echo "  MTP mode        : $CUR_MTP"
+echo "  Spec decode     : $CUR_SPEC"
+echo "  Draft model     : ${CUR_DRAFT:-none}"
 echo ""
 
 # ─── Model selection ───────────────────────────────────────────────────────────
@@ -374,6 +463,8 @@ echo "Available models:"
 for i in "${!MODELS[@]}"; do
   if is_mtp_model "${MODELS[$i]}"; then
     printf "  %2d) %s  [MTP]\n" $((i+1)) "${MODELS[$i]}"
+  elif is_dflash_model "${MODELS[$i]}"; then
+    printf "  %2d) %s  [DFlash]\n" $((i+1)) "${MODELS[$i]}"
   else
     printf "  %2d) %s\n" $((i+1)) "${MODELS[$i]}"
   fi
@@ -385,6 +476,20 @@ if ! [[ "$CHOICE" =~ ^[0-9]+$ ]] || (( CHOICE < 1 || CHOICE > ${#MODELS[@]} )); 
   exit 1
 fi
 NEW_MODEL="${MODELS[$((CHOICE-1))]}"
+
+# ─── DFlash draft pairing ──────────────────────────────────────────────────────
+# Look for a DFlash draft model sharing the selected model's family (e.g.
+# Qwen3.8-27B-Q4_K_M.gguf pairs with Qwen3.8-27B-DFlash2-Q2_K.gguf).
+DFLASH_DRAFT=""
+if ! is_dflash_model "$NEW_MODEL"; then
+  FAMILY="$(model_family "$NEW_MODEL")"
+  for m in "${MODELS[@]}"; do
+    if is_dflash_model "$m" && [[ "$(model_family "$m")" == "$FAMILY" ]]; then
+      DFLASH_DRAFT="$m"
+      break
+    fi
+  done
+fi
 
 # ─── Context size selection ────────────────────────────────────────────────────
 echo ""
@@ -433,13 +538,91 @@ case "${KV_CHOICE:-3}" in
   *) NEW_KV="q4_0" ;;
 esac
 
-# ─── MTP detection ─────────────────────────────────────────────────────────────
-if is_mtp_model "$NEW_MODEL"; then
-  NEW_MTP="yes"
-  MTP_INFO="--spec-type draft-mtp --spec-draft-n-max $MTP_DRAFT_N_MAX --parallel 1"
+# ─── Speculative decoding method selection ────────────────────────────────────
+# MTP models can use their MTP heads (draft-mtp) or self-speculative ngram
+# variants. Non-MTP models that have a same-family DFlash draft can use
+# DFlash2 (distilled flash draft model). Otherwise no spec flags are emitted.
+if is_mtp_model "$NEW_MODEL" || [ -n "$DFLASH_DRAFT" ]; then
+  if is_mtp_model "$NEW_MODEL"; then
+    # Auto-select MTP draft n-max: 5 for MoE, 3 for dense (unless overridden)
+    if [ -z "$MTP_DRAFT_N_MAX" ]; then
+      if is_moe_model "$NEW_MODEL"; then
+        MTP_DRAFT_N_MAX=5
+      else
+        MTP_DRAFT_N_MAX=3
+      fi
+    fi
+    DEFAULT_SPEC=1
+  elif [ -n "$DFLASH_DRAFT" ]; then
+    DEFAULT_SPEC=6
+  fi
+  echo ""
+  echo "Speculative decoding method:"
+  if is_mtp_model "$NEW_MODEL"; then
+    echo "   1) MTP draft     — use the model's MTP heads (default, n-max $MTP_DRAFT_N_MAX)"
+  else
+    echo "   1) MTP draft     — (not available: model is not an MTP model)"
+  fi
+  echo "   2) ngram-mod     — n-gram matching, self-speculative (tunable)"
+  echo "   3) ngram-map-k4v — n-gram keys + 4 m-gram values (fast self-speculation)"
+  echo "   4) ngram-map-k   — n-gram keys only"
+  echo "   5) ngram-simple  — simple n-gram lookup"
+  if [ -n "$DFLASH_DRAFT" ]; then
+    echo "   6) DFlash2       — distilled flash draft: $(basename "$DFLASH_DRAFT")"
+  fi
+  echo "   7) none          — disable speculative decoding"
+
+  read -rp "Select method [default: $DEFAULT_SPEC]: " SPEC_CHOICE
+  case "${SPEC_CHOICE:-$DEFAULT_SPEC}" in
+    1)
+      if ! is_mtp_model "$NEW_MODEL"; then
+        echo "ERROR: MTP draft requires an MTP model."
+        exit 1
+      fi
+      NEW_METHOD="draft-mtp"
+      SPEC_FLAGS="--spec-type draft-mtp --spec-draft-n-max $MTP_DRAFT_N_MAX"
+      ;;
+    2)
+      NEW_METHOD="ngram-mod"
+      read -rp "  Customize ngram-mod params? [y/N]: " NGRAM_CUSTOM
+      if [[ "$NGRAM_CUSTOM" =~ ^[Yy]$ ]]; then
+        read -rp "    n-match (lookup length, default $NGRAM_N_MATCH): " TMP_N
+        [[ "$TMP_N" =~ ^[0-9]+$ ]] && NGRAM_N_MATCH="$TMP_N"
+        read -rp "    n-min (draft min tokens, default $NGRAM_N_MIN): " TMP_N
+        [[ "$TMP_N" =~ ^[0-9]+$ ]] && NGRAM_N_MIN="$TMP_N"
+        read -rp "    n-max (draft max tokens, default $NGRAM_N_MAX): " TMP_N
+        [[ "$TMP_N" =~ ^[0-9]+$ ]] && NGRAM_N_MAX="$TMP_N"
+      fi
+      SPEC_FLAGS="--spec-type ngram-mod --spec-ngram-mod-n-match $NGRAM_N_MATCH --spec-ngram-mod-n-min $NGRAM_N_MIN --spec-ngram-mod-n-max $NGRAM_N_MAX"
+      ;;
+    3)
+      NEW_METHOD="ngram-map-k4v"
+      SPEC_FLAGS="--spec-type ngram-map-k4v"
+      ;;
+    4)
+      NEW_METHOD="ngram-map-k"
+      SPEC_FLAGS="--spec-type ngram-map-k"
+      ;;
+    5)
+      NEW_METHOD="ngram-simple"
+      SPEC_FLAGS="--spec-type ngram-simple"
+      ;;
+    6)
+      if [ -z "$DFLASH_DRAFT" ]; then
+        echo "ERROR: No DFlash draft model found for $NEW_MODEL"
+        exit 1
+      fi
+      NEW_METHOD="dflash"
+      SPEC_FLAGS="--spec-type draft-dflash --model-draft $DFLASH_DRAFT --spec-draft-n-max $DFLASH_DRAFT_N_MAX"
+      ;;
+    7|*)
+      NEW_METHOD="none"
+      SPEC_FLAGS=""
+      ;;
+  esac
 else
-  NEW_MTP="no"
-  MTP_INFO="(none)"
+  NEW_METHOD="none"
+  SPEC_FLAGS=""
 fi
 
 # ─── Summary & confirm ─────────────────────────────────────────────────────────
@@ -447,7 +630,11 @@ echo ""
 echo "  New model   : $NEW_MODEL"
 echo "  ctx-size    : $NEW_CTX"
 echo "  KV cache    : $NEW_KV (K and V)"
-echo "  MTP mode    : $NEW_MTP  $MTP_INFO"
+if [ -n "$SPEC_FLAGS" ]; then
+  echo "  Spec decode : $NEW_METHOD  $SPEC_FLAGS"
+else
+  echo "  Spec decode : $NEW_METHOD"
+fi
 echo ""
 read -rp "Apply and restart $SERVICE? [y/N]: " CONFIRM
 if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
@@ -456,34 +643,46 @@ if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
 fi
 
 # ─── Rewrite ExecStart & restart ──────────────────────────────────────────────
-if is_mtp_model "$NEW_MODEL"; then
-  rewrite_execstart "$NEW_MODEL" "$NEW_CTX" "$NEW_KV" "1"
-else
-  rewrite_execstart "$NEW_MODEL" "$NEW_CTX" "$NEW_KV" "0"
-fi
+rewrite_execstart "$NEW_MODEL" "$NEW_CTX" "$NEW_KV" "$SPEC_FLAGS"
 
 systemctl daemon-reload
 systemctl restart "$SERVICE"
 
-# ─── Wait for service to come up ──────────────────────────────────────────────
+# ─── Wait for service to come up (real readiness check) ──────────────────────
+# NOTE: `systemctl is-active` reports "active" during the "activating" phase,
+# so it stays green while the server crash-loops on a bad model/draft.
+# We instead probe the HTTP health endpoint and abort on failed/crash state.
+HEALTH_URL="http://127.0.0.1:80/health"
+START_RESTARTS="$(systemctl show -p NRestarts --value "$SERVICE" 2>/dev/null || echo 0)"
+OK=0
 echo ""
-echo "  Waiting for $SERVICE to start..."
-for i in {1..15}; do
-  if systemctl is-active --quiet "$SERVICE"; then
+echo "  Waiting for $SERVICE to load ($HEALTH_URL)..."
+for i in {1..90}; do
+  if curl -fsS -m 3 -o /dev/null "$HEALTH_URL" 2>/dev/null; then
+    OK=1
+    break
+  fi
+  NR="$(systemctl show -p NRestarts --value "$SERVICE" 2>/dev/null || echo 0)"
+  ST="$(systemctl show -p ActiveState --value "$SERVICE" 2>/dev/null)"
+  if [ "$ST" = "failed" ] || { [ -n "$NR" ] && [ "$NR" -gt "$START_RESTARTS" ]; }; then
+    echo "  [✗] $SERVICE entered failed/crash-loop state (NRestarts=$NR)."
     break
   fi
   sleep 2
 done
 
-if systemctl is-active --quiet "$SERVICE"; then
+if [ "$OK" = "1" ]; then
   echo "  [✓] Switched to : $NEW_MODEL"
   echo "  [✓] ctx-size    : $NEW_CTX"
   echo "  [✓] KV cache    : $NEW_KV (K and V)"
-  echo "  [✓] MTP mode    : $NEW_MTP"
-  echo "  [✓] Service     : $SERVICE running"
+  echo "  [✓] Spec decode : $NEW_METHOD"
+  if [ -n "$DFLASH_DRAFT" ]; then
+    echo "  [✓] Draft model : $DFLASH_DRAFT"
+  fi
+  echo "  [✓] Service     : $SERVICE running (health OK)"
   echo ""
   echo "  Web UI ready at       : http://$(hostname -I | awk '{print $1}'):80"
-  echo "  Verify VRAM usage with: rocm-smi"
+  echo "  Verify GPU usage with  : amdgpu_top (or vulkaninfo --summary)"
   echo "  Watch logs with       : journalctl -u $SERVICE -f"
 else
   echo "  [✗] WARNING: $SERVICE did not start cleanly after switch!"
@@ -496,6 +695,36 @@ chmod +x "$SWITCH_SCRIPT"
 # Keep /srv/ai/models/switch-model.sh in sync (both locations exist on this host)
 cp "$SWITCH_SCRIPT" "${MODEL_DIR}/switch-model.sh"
 chmod +x "${MODEL_DIR}/switch-model.sh"
+
+# --- 5b. MODEL DOWNLOAD HELPER (dl.sh) ---
+echo "[5b/7] Creating model download helper: ${MODEL_DIR}/dl.sh..."
+cat > "${MODEL_DIR}/dl.sh" << 'EOS'
+#!/usr/bin/env bash
+# dl.sh - HuggingFace model downloader with resume support
+# Usage: dl.sh <huggingface-resolve-url>
+URL="$1"
+if [ -z "$URL" ]; then
+    echo "Usage: $0 <huggingface-download-url>"
+    exit 1
+fi
+OUT="$(basename "${URL%%\?*}")"
+echo "=== HuggingFace Downloader ==="
+echo "URL : $URL"
+echo "OUT : $OUT"
+echo
+for attempt in {1..5}; do
+    echo "[Attempt $attempt] Starting/resuming download..."
+    curl -L -C - --fail --show-error --retry 3 --progress-bar -o "$OUT" "$URL" && {
+        echo "[✓] Download completed: $OUT"
+        exit 0
+    }
+    echo "[!] Attempt $attempt failed; retrying in 5s..."
+    sleep 5
+done
+echo "[✗] Download failed after 5 attempts: $URL"
+exit 1
+EOS
+chmod +x "${MODEL_DIR}/dl.sh"
 
 # --- 6. ENABLE & START SERVICE ---
 echo "[6/7] Enabling and starting $SERVICE_NAME..."
@@ -514,7 +743,7 @@ echo ""
 echo "[Service status]"
 systemctl status "$SERVICE_NAME" --no-pager
 echo ""
-echo "[Bootstrap complete - v0.8.3]"
+echo "[Bootstrap complete - v0.9.0]"
 echo "  Native llama.cpp web UI : http://<container-ip>:80"
 echo "  Switch models with      : switch-model.sh"
 echo "  GPU device              : gfx1150 (AMD Radeon 890M)"

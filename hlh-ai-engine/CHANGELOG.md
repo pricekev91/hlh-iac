@@ -7,16 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- DFlash2 speculative decoding support: llama.cpp pinned to commit `5ecbe1a` (PR #27342) and
+  switch-model.sh v1.6.1 with DFlash2 draft pairing (`--spec-type draft-dflash`) and
+  real readiness check (`/health` probe, crash-loop detection)
+- Required-model enforcement: DFlash2 draft GGUF
+  `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` is downloaded from
+  `z-lab/Qwen3.8-27B-DFlash2-GGUF` if missing (note: no Q2_K variant exists upstream;
+  a truncated Q2_K file caused `expected 81, got 58` load failures)
+- `dl.sh` resumable HuggingFace downloader written to model dir
+
 ### Changed
 
 - Upgrade ROCm from 7.2.3 to 7.14.0 (native gfx1150 rocBLAS support)
 - Switch llama-server from port 8080 (nginx) to port 80 (native web UI)
 - Update default model to Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
+- llama.cpp build is now pinned to `LLAMA_CPP_PIN` (deterministic fetch+checkout)
+  instead of floating `git pull` master
 
 ### Fixed
 
 - Fix ROCm 7.14 repo URLs for Ubuntu 24.04
 - Install ROCm dev package required for HIP CMake builds
+
+### Known limitations
+
+- Qwen3.8-27B decodes at ~4.3 tok/s regardless of speculation method (MTP/DFlash2/none)
+  because its Gated Delta Net attention fused kernels are not supported on HIP
+  (`fused Gated Delta Net not supported, set to disabled`); Qwen3.6-27B+MTP remains
+  the fastest config on this iGPU (~7.6-7.8 tok/s)
 
 ## [0.3.1] - 2026-06
 
