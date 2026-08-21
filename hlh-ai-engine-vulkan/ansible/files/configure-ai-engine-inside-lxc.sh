@@ -205,7 +205,7 @@ is_mtp_model() {
 
 # ─── Atomic ExecStart rewrite ──────────────────────────────────────────────────
 # Rewrites the full ExecStart block in the systemd unit with all chosen params.
-# Using awk avoids fragile multi-sed chaining and handles add/remove of spec flags.
+# Handles both single-line and multi-line (backslash-continued) ExecStart formats.
 rewrite_execstart() {
   local model="$1" ctx="$2" kv="$3" spec_flags="$4" gpu_flag="$5"
   local tmp_file
@@ -215,7 +215,7 @@ rewrite_execstart() {
 
   awk -v model="$model" -v ctx="$ctx" -v kv="$kv" -v spec_flags="$spec_flags" -v gpu_flag="$gpu_flag" '
     BEGIN { in_block=0; done=0 }
-    /^ExecStart=.*llama-server/ {
+    /^ExecStart=.*llama-server/ && !in_block {
       done=1
       print "ExecStart=/opt/llama.cpp/build/bin/llama-server \\"
       print "  --model " model " \\"
@@ -242,7 +242,9 @@ rewrite_execstart() {
       next
     }
     in_block {
-      if (/^Restart=/) { in_block=0; print }
+      # Skip continuation lines (ending with \) and any lines until Restart=
+      if (/\\$/) { next }
+      if (/^Restart=/) { in_block=0; print; next }
       next
     }
     { print }
