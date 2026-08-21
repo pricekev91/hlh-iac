@@ -293,7 +293,7 @@ CUR_KV_K=$( grep -- '--cache-type-k '  "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;
 CUR_KV_V=$( grep -- '--cache-type-v '  "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--cache-type-v")  print $(i+1)}') || CUR_KV_V="(not set)"
 CUR_SPEC=$( grep -- '--spec-type '     "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--spec-type")     print $(i+1)}') || CUR_SPEC="none"
 CUR_SPEC="${CUR_SPEC:-none}"
-CUR_GPU=$(grep -- '--gpu '             "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--gpu")     print $(i+1)}') || CUR_GPU="both (split)"
+CUR_GPU=$(grep -- '--device '             "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--device")     print $(i+1)}') || CUR_GPU="both (split)"
 
 echo "  Model directory : $MODEL_DIR"
 echo "  Currently active: $CUR_MODEL"
@@ -382,10 +382,10 @@ esac
   echo ""
   read -rp "Select GPU [default: 1]: " GPU_CHOICE
   case "${GPU_CHOICE:-1}" in
-    1) GPU_FLAG="--gpu 0" ;;
-    2) GPU_FLAG="--gpu 1" ;;
+    1) GPU_FLAG="--device 0" ;;
+    2) GPU_FLAG="--device 1" ;;
     3) GPU_FLAG="" ;;
-    *) GPU_FLAG="--gpu 0" ;;
+    *) GPU_FLAG="--device 0" ;;
   esac
 
   # ─── Speculative decoding method selection ────────────────────────────────────
