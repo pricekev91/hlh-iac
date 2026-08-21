@@ -25,7 +25,7 @@ LLAMA_CPP_REPO="https://github.com/ggerganov/llama.cpp.git"
 LLAMA_CPP_DIR="/opt/llama.cpp"
 SERVICE_NAME="ai-engine"
 SYSTEMD_SERVICE="/etc/systemd/system/${SERVICE_NAME}.service"
-SWITCH_SCRIPT="/usr/local/bin/switch-model.sh"
+SWITCH_SCRIPT="/usr/local/bin/vulkan-switch-model.sh"
 
 # --- 1. BASE DEPENDENCIES ---
 echo "[1/7] Installing base dependencies..."
@@ -166,11 +166,12 @@ UNIT
 echo "[5/7] Creating interactive model switcher: $SWITCH_SCRIPT..."
 cat > "$SWITCH_SCRIPT" << 'EOS'
 #!/usr/bin/env bash
-# switch-model.sh
-# Version: 1.6.1
-# Description: Interactive model switcher for llama.cpp ai-engine service
+# vulkan-switch-model.sh
+# Version: 1.7.0
+# Description: Interactive model switcher for llama.cpp ai-engine service (Vulkan backend)
 # Supports: model selection, ctx-size, KV cache quantization, speculative decoding (MTP/ngram), GPU selection
 # Changelog:
+#   1.7.0 - Renamed to vulkan-switch-model.sh to distinguish from ROCm variant
 #   1.6.1 - Fixed GPU flag: use --device (Vulkan) not --gpu (CUDA/ROCm)
 #   1.6.0 - Added mandatory GPU selection menu (force single GPU to avoid multi-GPU bandwidth tank on 890M)
 #   1.5.0 - Added full ngram speculative decoding menu (ngram-mod, ngram-map-k4v,
@@ -264,7 +265,7 @@ rewrite_execstart() {
 # ─── Banner ────────────────────────────────────────────────────────────────────
 echo ""
 echo "╔══════════════════════════════════════════════════════════════════╗"
-echo "║                      switch-model.sh                             ║"
+echo "║                   vulkan-switch-model.sh                         ║"
 echo "╠══════════════════════════════════════════════════════════════════╣"
 echo "║  VRAM BUDGET REFERENCE  (model weights + KV cache = total need)  ║"
 echo "║                                                                  ║"
@@ -536,9 +537,9 @@ fi
 EOS
 chmod +x "$SWITCH_SCRIPT"
 
-# Keep /srv/ai/models/switch-model.sh in sync (both locations exist on this host)
-cp "$SWITCH_SCRIPT" "${MODEL_DIR}/switch-model.sh"
-chmod +x "${MODEL_DIR}/switch-model.sh"
+# Keep /srv/ai/models/vulkan-switch-model.sh in sync (both locations exist on this host)
+cp "$SWITCH_SCRIPT" "${MODEL_DIR}/vulkan-switch-model.sh"
+chmod +x "${MODEL_DIR}/vulkan-switch-model.sh"
 
 # --- 6. ENABLE & START SERVICE ---
 echo "[6/7] Enabling and starting $SERVICE_NAME..."
@@ -557,7 +558,7 @@ echo ""
 echo "[Service status]"
 systemctl status "$SERVICE_NAME" --no-pager
 echo ""
-echo "[Bootstrap complete - v1.3.0]"
+echo "[Bootstrap complete - v1.4.0]"
 echo "  Native llama.cpp web UI : http://<container-ip>:80"
-echo "  Switch models with      : switch-model.sh (v1.6.1: MTP + ngram + GPU select --device)"
+echo "  Switch models with      : vulkan-switch-model.sh (v1.7.0: MTP + ngram + GPU select --device)"
 echo "  GPU backend             : Vulkan (RADV via Mesa, gfx1150 AMD Radeon 890M)"
