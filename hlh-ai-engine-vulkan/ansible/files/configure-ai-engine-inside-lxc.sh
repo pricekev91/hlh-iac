@@ -167,14 +167,13 @@ echo "[5/7] Creating interactive model switcher: $SWITCH_SCRIPT..."
 cat > "$SWITCH_SCRIPT" << 'EOS'
 #!/usr/bin/env bash
 # switch-model.sh
-# Version: 1.4.2
+# Version: 1.6.0
 # Description: Interactive model switcher for llama.cpp ai-engine service
-# Supports: model selection, ctx-size, KV cache quantization, MTP auto-detect
+# Supports: model selection, ctx-size, KV cache quantization, speculative decoding (MTP/ngram), GPU selection
 # Changelog:
-#   1.0.0 - Initial version (model switch only)
-#   1.1.0 - Added ctx-size selection and KV cache quantization prompt
-#   1.2.0 - Added VRAM budget reference table to banner
-#            ctx-size options expanded: 96K / 72K / 64K / 32K / 16K / 8K / custom
+#   1.6.0 - Added mandatory GPU selection menu (force single GPU to avoid multi-GPU bandwidth tank on 890M)
+#   1.5.0 - Added full ngram speculative decoding menu (ngram-mod, ngram-map-k4v,
+#            ngram-map-k, ngram-simple) for non-MTP models; tunable ngram-mod params
 #   1.4.2 - Added 72K / 96K ctx-size options + VRAM table rows
 #            Shows current model, ctx-size, and KV cache state on launch
 #   1.3.0 - Auto-detect MTP models by filename (case-insensitive 'MTP' match)
@@ -194,6 +193,11 @@ SERVICE="ai-engine"
 SYSTEMD_SERVICE="/etc/systemd/system/${SERVICE}.service"
 MTP_DRAFT_N_MAX="${MTP_DRAFT_N_MAX:-3}"
 
+# ngram-mod tuning defaults (match llama.cpp build defaults)
+NGRAM_N_MATCH="${NGRAM_N_MATCH:-24}"
+NGRAM_N_MIN="${NGRAM_N_MIN:-48}"
+NGRAM_N_MAX="${NGRAM_N_MAX:-64}"
+
 # ─── MTP Detection ─────────────────────────────────────────────────────────────
 is_mtp_model() {
   [[ "$(basename "$1")" =~ [Mm][Tt][Pp] ]]
@@ -201,15 +205,15 @@ is_mtp_model() {
 
 # ─── Atomic ExecStart rewrite ──────────────────────────────────────────────────
 # Rewrites the full ExecStart block in the systemd unit with all chosen params.
-# Using awk avoids fragile multi-sed chaining and handles add/remove of MTP flags.
+# Using awk avoids fragile multi-sed chaining and handles add/remove of spec flags.
 rewrite_execstart() {
-  local model="$1" ctx="$2" kv="$3" mtp="$4"
+  local model="$1" ctx="$2" kv="$3" spec_flags="$4" gpu_flag="$5"
   local tmp_file
   tmp_file="$(mktemp)"
 
   cp "$SYSTEMD_SERVICE" "${SYSTEMD_SERVICE}.backup.$(date +%s)"
 
-  awk -v model="$model" -v ctx="$ctx" -v kv="$kv" -v mtp="$mtp" -v mtpn="$MTP_DRAFT_N_MAX" '
+  awk -v model="$model" -v ctx="$ctx" -v kv="$kv" -v spec_flags="$spec_flags" -v gpu_flag="$gpu_flag" '
     BEGIN { in_block=0; done=0 }
     /^ExecStart=.*llama-server/ {
       done=1
@@ -219,15 +223,20 @@ rewrite_execstart() {
       print "  --ctx-size " ctx " \\"
       print "  -ngl 48 \\"
       print "  --batch-size 128 \\"
-      print "  --parallel 1 \\"
       print "  --cache-type-k " kv " \\"
-      if (mtp == "1") {
+      if (spec_flags != "") {
         print "  --cache-type-v " kv " \\"
-        print "  --spec-type draft-mtp \\"
-        print "  --spec-draft-n-max " mtpn " \\"
+        print "  " spec_flags " \\"
+        if (gpu_flag != "") {
+          print "  " gpu_flag " \\"
+        }
         print "  --parallel 1"
       } else {
-        print "  --cache-type-v " kv
+        print "  --cache-type-v " kv " \\"
+        if (gpu_flag != "") {
+          print "  " gpu_flag " \\"
+        }
+        print "  --parallel 1"
       }
       in_block=1
       next
@@ -280,13 +289,16 @@ CUR_MODEL=$(grep -- '--model '         "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;
 CUR_CTX=$(  grep -- '--ctx-size '      "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--ctx-size")      print $(i+1)}') || CUR_CTX="(not set)"
 CUR_KV_K=$( grep -- '--cache-type-k '  "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--cache-type-k")  print $(i+1)}') || CUR_KV_K="(not set)"
 CUR_KV_V=$( grep -- '--cache-type-v '  "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--cache-type-v")  print $(i+1)}') || CUR_KV_V="(not set)"
-if is_mtp_model "${CUR_MODEL:-}"; then CUR_MTP="yes"; else CUR_MTP="no"; fi
+CUR_SPEC=$( grep -- '--spec-type '     "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--spec-type")     print $(i+1)}') || CUR_SPEC="none"
+CUR_SPEC="${CUR_SPEC:-none}"
+CUR_GPU=$(grep -- '--gpu '             "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--gpu")     print $(i+1)}') || CUR_GPU="both (split)"
 
 echo "  Model directory : $MODEL_DIR"
 echo "  Currently active: $CUR_MODEL"
 echo "  ctx-size        : ${CUR_CTX:-(not set)}"
 echo "  KV cache (K/V)  : ${CUR_KV_K} / ${CUR_KV_V}"
-echo "  MTP mode        : $CUR_MTP"
+echo "  Spec decode     : $CUR_SPEC"
+echo "  GPU             : $CUR_GPU"
 echo ""
 
 # ─── Model selection ───────────────────────────────────────────────────────────
@@ -359,34 +371,136 @@ case "${KV_CHOICE:-3}" in
   *) NEW_KV="q4_0" ;;
 esac
 
-# ─── MTP detection ─────────────────────────────────────────────────────────────
-if is_mtp_model "$NEW_MODEL"; then
-  NEW_MTP="yes"
-  MTP_INFO="--spec-type draft-mtp --spec-draft-n-max $MTP_DRAFT_N_MAX --parallel 1"
-else
-  NEW_MTP="no"
-  MTP_INFO="(none)"
-fi
+# ─── GPU selection ──────────────────────────────────────────────────────────────
+  echo ""
+  echo "GPU selection (FORCE single GPU — multi-GPU splits layers and tanks tok/s on bandwidth-starved iGPU):"
+  echo "   1) GPU 0 only  — 890M iGPU (recommended for single-GPU speed)"
+  echo "   2) GPU 1 only  — eGPU (RX 480 / MI60 when present)"
+  echo "   3) Both GPUs   — split layers across both (default llama.cpp behavior, SLOW on 890M)"
+  echo ""
+  read -rp "Select GPU [default: 1]: " GPU_CHOICE
+  case "${GPU_CHOICE:-1}" in
+    1) GPU_FLAG="--gpu 0" ;;
+    2) GPU_FLAG="--gpu 1" ;;
+    3) GPU_FLAG="" ;;
+    *) GPU_FLAG="--gpu 0" ;;
+  esac
+
+  # ─── Speculative decoding method selection ────────────────────────────────────
+  if is_mtp_model "$NEW_MODEL"; then
+    NEW_MTP="yes"
+    MTP_INFO="--spec-type draft-mtp --spec-draft-n-max $MTP_DRAFT_N_MAX --parallel 1"
+    DEFAULT_SPEC=1
+    echo ""
+    echo "Speculative decoding method:"
+    echo "   1) MTP draft     — use the model's MTP heads (default, n-max $MTP_DRAFT_N_MAX)"
+    echo "   2) ngram-mod     — n-gram matching, self-speculative (tunable)"
+    echo "   3) ngram-map-k4v — n-gram keys + 4 m-gram values (fast self-speculation)"
+    echo "   4) ngram-map-k   — n-gram keys only"
+    echo "   5) ngram-simple  — simple n-gram lookup"
+    echo "   6) none (standard) — disable speculative decoding"
+
+    read -rp "Select method [default: $DEFAULT_SPEC]: " SPEC_CHOICE
+    case "${SPEC_CHOICE:-$DEFAULT_SPEC}" in
+      1)
+        NEW_METHOD="draft-mtp"
+        SPEC_FLAGS="--spec-type draft-mtp --spec-draft-n-max $MTP_DRAFT_N_MAX"
+        ;;
+      2)
+        NEW_METHOD="ngram-mod"
+        read -rp "  Customize ngram-mod params? [y/N]: " NGRAM_CUSTOM
+        if [[ "$NGRAM_CUSTOM" =~ ^[Yy]$ ]]; then
+          read -rp "    n-match (lookup length, default 24): " TMP_N
+          [[ "$TMP_N" =~ ^[0-9]+$ ]] && NGRAM_N_MATCH="$TMP_N"
+          read -rp "    n-min (draft min tokens, default 48): " TMP_N
+          [[ "$TMP_N" =~ ^[0-9]+$ ]] && NGRAM_N_MIN="$TMP_N"
+          read -rp "    n-max (draft max tokens, default 64): " TMP_N
+          [[ "$TMP_N" =~ ^[0-9]+$ ]] && NGRAM_N_MAX="$TMP_N"
+        fi
+        SPEC_FLAGS="--spec-type ngram-mod --spec-ngram-mod-n-match $NGRAM_N_MATCH --spec-ngram-mod-n-min $NGRAM_N_MIN --spec-ngram-mod-n-max $NGRAM_N_MAX"
+        ;;
+      3)
+        NEW_METHOD="ngram-map-k4v"
+        SPEC_FLAGS="--spec-type ngram-map-k4v"
+        ;;
+      4)
+        NEW_METHOD="ngram-map-k"
+        SPEC_FLAGS="--spec-type ngram-map-k"
+        ;;
+      5)
+        NEW_METHOD="ngram-simple"
+        SPEC_FLAGS="--spec-type ngram-simple"
+        ;;
+      6|*)
+        NEW_METHOD="none"
+        SPEC_FLAGS=""
+        ;;
+    esac
+  else
+    NEW_MTP="no"
+    DEFAULT_SPEC=1
+    echo ""
+    echo "Speculative decoding method:"
+    echo "   1) ngram-mod     — n-gram matching, self-speculative (tunable, best quality)"
+    echo "   2) ngram-map-k4v — n-gram keys + 4 m-gram values (fast)"
+    echo "   3) ngram-map-k   — n-gram keys only"
+    echo "   4) ngram-simple  — simple n-gram lookup"
+    echo "   5) none (standard) — disable speculative decoding"
+
+    read -rp "Select method [default: $DEFAULT_SPEC]: " SPEC_CHOICE
+    case "${SPEC_CHOICE:-$DEFAULT_SPEC}" in
+      1)
+        NEW_METHOD="ngram-mod"
+        read -rp "  Customize ngram-mod params? [y/N]: " NGRAM_CUSTOM
+        if [[ "$NGRAM_CUSTOM" =~ ^[Yy]$ ]]; then
+          read -rp "    n-match (lookup length, default 24): " TMP_N
+          [[ "$TMP_N" =~ ^[0-9]+$ ]] && NGRAM_N_MATCH="$TMP_N"
+          read -rp "    n-min (draft min tokens, default 48): " TMP_N
+          [[ "$TMP_N" =~ ^[0-9]+$ ]] && NGRAM_N_MIN="$TMP_N"
+          read -rp "    n-max (draft max tokens, default 64): " TMP_N
+          [[ "$TMP_N" =~ ^[0-9]+$ ]] && NGRAM_N_MAX="$TMP_N"
+        fi
+        SPEC_FLAGS="--spec-type ngram-mod --spec-ngram-mod-n-match $NGRAM_N_MATCH --spec-ngram-mod-n-min $NGRAM_N_MIN --spec-ngram-mod-n-max $NGRAM_N_MAX"
+        ;;
+      2)
+        NEW_METHOD="ngram-map-k4v"
+        SPEC_FLAGS="--spec-type ngram-map-k4v"
+        ;;
+      3)
+        NEW_METHOD="ngram-map-k"
+        SPEC_FLAGS="--spec-type ngram-map-k"
+        ;;
+      4)
+        NEW_METHOD="ngram-simple"
+        SPEC_FLAGS="--spec-type ngram-simple"
+        ;;
+      5|*)
+        NEW_METHOD="none"
+        SPEC_FLAGS=""
+        ;;
+    esac
+  fi
 
 # ─── Summary & confirm ─────────────────────────────────────────────────────────
-echo ""
-echo "  New model   : $NEW_MODEL"
-echo "  ctx-size    : $NEW_CTX"
-echo "  KV cache    : $NEW_KV (K and V)"
-echo "  MTP mode    : $NEW_MTP  $MTP_INFO"
-echo ""
-read -rp "Apply and restart $SERVICE? [y/N]: " CONFIRM
-if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-  echo "Aborted."
-  exit 0
-fi
+  echo ""
+  echo "  New model   : $NEW_MODEL"
+  echo "  ctx-size    : $NEW_CTX"
+  echo "  KV cache    : $NEW_KV (K and V)"
+  if [ -n "$SPEC_FLAGS" ]; then
+    echo "  Spec decode : $NEW_METHOD  $SPEC_FLAGS"
+  else
+    echo "  Spec decode : $NEW_METHOD"
+  fi
+  echo "  GPU         : ${GPU_FLAG:-both (split layers)}"
+  echo ""
+  read -rp "Apply and restart $SERVICE? [y/N]: " CONFIRM
+  if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+    echo "Aborted."
+    exit 0
+  fi
 
-# ─── Rewrite ExecStart & restart ──────────────────────────────────────────────
-if is_mtp_model "$NEW_MODEL"; then
-  rewrite_execstart "$NEW_MODEL" "$NEW_CTX" "$NEW_KV" "1"
-else
-  rewrite_execstart "$NEW_MODEL" "$NEW_CTX" "$NEW_KV" "0"
-fi
+  # ─── Rewrite ExecStart & restart ──────────────────────────────────────────────
+  rewrite_execstart "$NEW_MODEL" "$NEW_CTX" "$NEW_KV" "$SPEC_FLAGS" "$GPU_FLAG"
 
 systemctl daemon-reload
 systemctl restart "$SERVICE"
@@ -440,7 +554,7 @@ echo ""
 echo "[Service status]"
 systemctl status "$SERVICE_NAME" --no-pager
 echo ""
-echo "[Bootstrap complete - v1.0.2]"
+echo "[Bootstrap complete - v1.2.0]"
 echo "  Native llama.cpp web UI : http://<container-ip>:80"
-echo "  Switch models with      : switch-model.sh"
+echo "  Switch models with      : switch-model.sh (v1.6.0: MTP + ngram + GPU select)"
 echo "  GPU backend             : Vulkan (RADV via Mesa, gfx1150 AMD Radeon 890M)"
