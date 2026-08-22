@@ -378,16 +378,16 @@ esac
 # ─── GPU selection ──────────────────────────────────────────────────────────────
   echo ""
   echo "GPU selection (FORCE single GPU — multi-GPU splits layers and tanks tok/s on bandwidth-starved iGPU):"
-  echo "   1) GPU 0 only  — 890M iGPU (recommended for single-GPU speed)"
-  echo "   2) GPU 1 only  — eGPU (RX 480 / MI60 when present)"
+  echo "   1) Vulkan0     — AMD Radeon RX 480 (eGPU, 8GB VRAM)"
+  echo "   2) Vulkan1     — AMD Radeon 890M (iGPU, 64GB shared)"
   echo "   3) Both GPUs   — split layers across both (default llama.cpp behavior, SLOW on 890M)"
   echo ""
-  read -rp "Select GPU [default: 1]: " GPU_CHOICE
-  case "${GPU_CHOICE:-1}" in
-    1) GPU_FLAG="--device 0" ;;
-    2) GPU_FLAG="--device 1" ;;
+  read -rp "Select GPU [default: 2]: " GPU_CHOICE
+  case "${GPU_CHOICE:-2}" in
+    1) GPU_FLAG="--device Vulkan0" ;;
+    2) GPU_FLAG="--device Vulkan1" ;;
     3) GPU_FLAG="" ;;
-    *) GPU_FLAG="--device 0" ;;
+    *) GPU_FLAG="--device Vulkan1" ;;
   esac
 
   # ─── Speculative decoding method selection ────────────────────────────────────
