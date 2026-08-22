@@ -32,7 +32,7 @@ echo "[1/7] Installing base dependencies..."
 apt-get update
 apt-get install -y --no-install-recommends \
   build-essential git cmake pkg-config \
-  python3 python3-pip curl wget unzip \
+  python3 python3-pip curl wget unzip bc \
   libopenblas-dev libssl-dev ca-certificates gnupg \
   openssh-server \
   libvulkan1 libvulkan-dev mesa-vulkan-drivers vulkan-tools glslc \
@@ -167,10 +167,14 @@ echo "[5/7] Creating interactive model switcher: $SWITCH_SCRIPT..."
 cat > "$SWITCH_SCRIPT" << 'EOS'
 #!/usr/bin/env bash
 # vulkan-switch-model.sh
-# Version: 1.7.0
+# Version: 1.9.0
 # Description: Interactive model switcher for llama.cpp ai-engine service (Vulkan backend)
 # Supports: model selection, ctx-size, KV cache quantization, speculative decoding (MTP/ngram), GPU selection
 # Changelog:
+#   1.9.0 - VRAM spillover analysis, CTX size suggestions per GPU, spillover confirmation
+#   1.8.1 - Show exact llama-server command being launched
+#   1.8.0 - Dynamic Vulkan GPU enumeration from llama.cpp --list-devices
+#   1.7.1 - Fixed Vulkan device names (Vulkan0/Vulkan1) for --device flag
 #   1.7.0 - Renamed to vulkan-switch-model.sh to distinguish from ROCm variant
 #   1.6.1 - Fixed GPU flag: use --device (Vulkan) not --gpu (CUDA/ROCm)
 #   1.6.0 - Added mandatory GPU selection menu (force single GPU to avoid multi-GPU bandwidth tank on 890M)
@@ -778,7 +782,7 @@ echo ""
 echo "[Service status]"
 systemctl status "$SERVICE_NAME" --no-pager
 echo ""
-echo "[Bootstrap complete - v1.6.0]"
+echo "[Bootstrap complete - v1.7.0]"
 echo "  Native llama.cpp web UI : http://<container-ip>:80"
-echo "  Switch models with      : vulkan-switch-model.sh (v1.8.1: exact cmd display + dynamic GPU enum + MTP + ngram)"
+echo "  Switch models with      : vulkan-switch-model.sh (v1.9.0: VRAM spillover analysis + CTX suggestions + exact cmd)"
 echo "  GPU backend             : Vulkan (RADV via Mesa, gfx1150 AMD Radeon 890M)"
