@@ -375,20 +375,44 @@ case "${KV_CHOICE:-3}" in
   *) NEW_KV="q4_0" ;;
 esac
 
-# ─── GPU selection ──────────────────────────────────────────────────────────────
+# ─── GPU selection (dynamic enumeration) ────────────────────────────────────────
   echo ""
   echo "GPU selection (FORCE single GPU — multi-GPU splits layers and tanks tok/s on bandwidth-starved iGPU):"
-  echo "   1) Vulkan0     — AMD Radeon RX 480 (eGPU, 8GB VRAM)"
-  echo "   2) Vulkan1     — AMD Radeon 890M (iGPU, 64GB shared)"
-  echo "   3) Both GPUs   — split layers across both (default llama.cpp behavior, SLOW on 890M)"
-  echo ""
-  read -rp "Select GPU [default: 2]: " GPU_CHOICE
-  case "${GPU_CHOICE:-2}" in
-    1) GPU_FLAG="--device Vulkan0" ;;
-    2) GPU_FLAG="--device Vulkan1" ;;
-    3) GPU_FLAG="" ;;
-    *) GPU_FLAG="--device Vulkan1" ;;
-  esac
+  
+  # Get available Vulkan devices from llama.cpp (format: "  Vulkan0: AMD Radeon RX 480 ...")
+  mapfile -t VULKAN_DEVICE_LINES < <(/opt/llama.cpp/build/bin/llama-server --list-devices 2>/dev/null | grep -E '^  Vulkan[0-9]+:')
+  
+  if [ "${#VULKAN_DEVICE_LINES[@]}" -eq 0 ]; then
+    echo "  WARNING: No Vulkan devices detected by llama.cpp"
+    echo "  Falling back to CPU-only mode"
+    GPU_FLAG=""
+  else
+    echo "  Available Vulkan devices:"
+    for i in "${!VULKAN_DEVICE_LINES[@]}"; do
+      # Parse: "  Vulkan0: AMD Radeon RX 480 Graphics (RADV POLARIS10) (8192 MiB, 8186 MiB free)"
+      DEVICE_NAME=$(echo "${VULKAN_DEVICE_LINES[$i]}" | sed 's/^  //' | cut -d: -f1)
+      DEVICE_INFO=$(echo "${VULKAN_DEVICE_LINES[$i]}" | cut -d: -f2- | sed 's/^ //')
+      echo "    $((i+1))) $DEVICE_NAME — $DEVICE_INFO"
+    done
+    echo "    $(( ${#VULKAN_DEVICE_LINES[@]} + 1 ))) All GPUs — split layers across all (default llama.cpp behavior, SLOW on bandwidth-starved iGPU)"
+    echo ""
+    read -rp "Select GPU [default: ${#VULKAN_DEVICE_LINES[@]}]: " GPU_CHOICE
+    DEFAULT_GPU="${#VULKAN_DEVICE_LINES[@]}"
+    case "${GPU_CHOICE:-$DEFAULT_GPU}" in
+      *[!0-9]*) GPU_FLAG="--device $(echo "${VULKAN_DEVICE_LINES[0]}" | sed 's/^  //' | cut -d: -f1)" ;;  # fallback
+      *)
+        if [ "$GPU_CHOICE" -ge 1 ] && [ "$GPU_CHOICE" -le "${#VULKAN_DEVICE_LINES[@]}" ]; then
+          SELECTED_DEVICE=$(echo "${VULKAN_DEVICE_LINES[$((GPU_CHOICE-1))]}" | sed 's/^  //' | cut -d: -f1)
+          GPU_FLAG="--device $SELECTED_DEVICE"
+        elif [ "$GPU_CHOICE" -eq "$(( ${#VULKAN_DEVICE_LINES[@]} + 1 ))" ]; then
+          GPU_FLAG=""  # all GPUs
+        else
+          SELECTED_DEVICE=$(echo "${VULKAN_DEVICE_LINES[$((DEFAULT_GPU-1))]}" | sed 's/^  //' | cut -d: -f1)
+          GPU_FLAG="--device $SELECTED_DEVICE"  # fallback to last
+        fi
+        ;;
+    esac
+  fi
 
   # ─── Speculative decoding method selection ────────────────────────────────────
   if is_mtp_model "$NEW_MODEL"; then
