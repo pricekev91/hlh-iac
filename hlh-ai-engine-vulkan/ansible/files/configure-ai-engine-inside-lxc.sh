@@ -200,6 +200,100 @@ NGRAM_N_MATCH="${NGRAM_N_MATCH:-24}"
 NGRAM_N_MIN="${NGRAM_N_MIN:-48}"
 NGRAM_N_MAX="${NGRAM_N_MAX:-64}"
 
+# ─── VRAM Estimation Helpers ─────────────────────────────────────────────────────
+# Model size estimates (GB) based on param count and quantization
+# Format: "model_pattern:size_gb"
+declare -A MODEL_SIZE_ESTIMATES=(
+  ["0.5b"]="0.3" ["1b"]="0.6" ["1.5b"]="0.9" ["2b"]="1.2" ["2.5b"]="1.5"
+  ["3b"]="1.8" ["3.5b"]="2.1" ["4b"]="2.4" ["6b"]="3.6" ["7b"]="4.2"
+  ["8b"]="4.8" ["9b"]="5.4" ["12b"]="7.2" ["13b"]="7.8" ["14b"]="8.4"
+  ["27b"]="16.2" ["30b"]="18.0" ["32b"]="19.2" ["35b"]="21.0"
+  ["70b"]="42.0" ["72b"]="43.2" ["122b"]="73.2"
+)
+
+# Quantization multipliers (relative to FP16)
+declare -A QUANT_MULTIPLIER=(
+  ["q2_k"]="0.25" ["q2_k_m"]="0.25" ["q2_k_s"]="0.25"
+  ["q3_k"]="0.31" ["q3_k_m"]="0.31" ["q3_k_s"]="0.31" ["q3_k_l"]="0.31"
+  ["q4_0"]="0.38" ["q4_k"]="0.38" ["q4_k_m"]="0.38" ["q4_k_s"]="0.38"
+  ["q5_0"]="0.44" ["q5_k"]="0.44" ["q5_k_m"]="0.44" ["q5_k_s"]="0.44"
+  ["q6_k"]="0.50" ["q6_0"]="0.50"
+  ["q8_0"]="0.63" ["q8_k"]="0.63"
+  ["f16"]="1.0" ["f32"]="2.0"
+)
+
+# KV cache bytes per token per layer (approx)
+# q4_0: ~0.5 bytes/token/layer, q6_0: ~0.75, q8_0: ~1.0
+estimate_model_vram_gb() {
+  local model_file="$1"
+  local basename=$(basename "$model_file" .gguf)
+  basename="${basename,,}"  # lowercase
+
+  # Extract param count (e.g., 30b, 35b, 7b, etc.)
+  local param_b=0
+  if [[ "$basename" =~ ([0-9]+)b ]]; then
+    param_b="${BASH_REMATCH[1]}"
+  elif [[ "$basename" =~ -([0-9]+)b- ]]; then
+    param_b="${BASH_REMATCH[1]}"
+  elif [[ "$basename" =~ ([0-9]+)\.([0-9]+)b ]]; then
+    param_b="${BASH_REMATCH[1]}"
+  fi
+
+  if [ "$param_b" -eq 0 ]; then
+    echo "0"
+    return
+  fi
+
+  # FP16 baseline: 2 bytes per param
+  local fp16_gb=$(( param_b * 2 / 1024 * 1000 / 1000 ))  # rough GB
+  # Better: param_b * 10^9 * 2 bytes / 1024^3
+  fp16_gb=$(echo "scale=2; $param_b * 2 / 1.0737" | bc -l 2>/dev/null || echo "$(( param_b * 2 ))")
+
+  # Extract quantization
+  local quant="q4_k_m"
+  if [[ "$basename" =~ (q[0-9]_?[a-z]*) ]]; then
+    quant="${BASH_REMATCH[1]}"
+    quant="${quant,,}"
+  fi
+
+  local mult="${QUANT_MULTIPLIER[$quant]:-0.38}"
+  local est_gb=$(echo "scale=2; $fp16_gb * $mult" | bc -l 2>/dev/null || echo "$fp16_gb")
+  echo "$est_gb"
+}
+
+# KV cache estimate in GB: ctx_size * layers * bytes_per_token * 2 (K+V) / 1024^3
+# For typical models: ~32-80 layers, ~0.5-1.0 bytes/token/layer depending on quant
+estimate_kv_cache_gb() {
+  local ctx_size="$1"
+  local quant="${2:-q4_0}"
+  local layers="${3:-48}"  # default layers to offload
+
+  local bytes_per_token=0
+  case "${quant,,}" in
+    q2*|q3*) bytes_per_token=0.4 ;;
+    q4*)     bytes_per_token=0.5 ;;
+    q5*)     bytes_per_token=0.6 ;;
+    q6*)     bytes_per_token=0.75 ;;
+    q8*)     bytes_per_token=1.0 ;;
+    *)       bytes_per_token=0.5 ;;
+  esac
+
+  # GB = ctx * layers * bytes * 2 (K+V) / 1024^3
+  local kv_gb=$(echo "scale=2; $ctx_size * $layers * $bytes_per_token * 2 / 1073741824" | bc -l 2>/dev/null || echo "0")
+  echo "$kv_gb"
+}
+
+# Parse GPU VRAM from device info line
+parse_gpu_vram_mib() {
+  local device_line="$1"
+  # "Vulkan0: AMD Radeon RX 480 Graphics (RADV POLARIS10) (8192 MiB, 8186 MiB free)"
+  if [[ "$device_line" =~ \(([0-9]+)\ MiB ]]; then
+    echo "${BASH_REMATCH[1]}"
+  else
+    echo "0"
+  fi
+}
+
 # ─── MTP Detection ─────────────────────────────────────────────────────────────
 is_mtp_model() {
   [[ "$(basename "$1")" =~ [Mm][Tt][Pp] ]]
@@ -322,13 +416,51 @@ for i in "${!MODELS[@]}"; do
 done
 
 read -rp "Select model number to activate: " CHOICE
-if ! [[ "$CHOICE" =~ ^[0-9]+$ ]] || (( CHOICE < 1 || CHOICE > ${#MODELS[@]} )); then
-  echo "Invalid selection."
-  exit 1
-fi
-NEW_MODEL="${MODELS[$((CHOICE-1))]}"
+  if ! [[ "$CHOICE" =~ ^[0-9]+$ ]] || (( CHOICE < 1 || CHOICE > ${#MODELS[@]} )); then
+    echo "Invalid selection."
+    exit 1
+  fi
+  NEW_MODEL="${MODELS[$((CHOICE-1))]}"
 
-# ─── Context size selection ────────────────────────────────────────────────────
+  # ─── VRAM Analysis (after model selection, before ctx/KV/GPU) ────────────────────
+  echo ""
+  echo "════════════════════════════════════════════════════════════════════════════════"
+  echo "  VRAM ANALYSIS FOR: $(basename "$NEW_MODEL")"
+  echo "═══════════════════════════════════════════════════════════════════════════════"
+
+  # Estimate model VRAM
+  MODEL_VRAM_GB=$(estimate_model_vram_gb "$NEW_MODEL")
+  echo "  Estimated model size: ${MODEL_VRAM_GB} GB (weights only)"
+
+  # We'll do full VRAM analysis after GPU and KV selection
+  # For now, show context size recommendations based on typical VRAM
+  echo ""
+  echo "  Suggested CTX sizes for common GPU VRAM budgets (with q4_0 KV):"
+  echo "    GPU VRAM  │  Safe CTX (model+KV < 90% VRAM)  │  Max CTX (model+KV < 100% VRAM)"
+  echo "    ──────────┼───────────────────────────────────┼─────────────────────────────────"
+  for vram in 8 12 16 24 32 48 64; do
+    # Available for KV = VRAM * 0.9 - model
+    local kv_budget_90=$(echo "scale=0; $vram * 900 - $MODEL_VRAM_GB * 1000" | bc -l 2>/dev/null || echo "0")
+    local kv_budget_100=$(echo "scale=0; $vram * 1000 - $MODEL_VRAM_GB * 1000" | bc -l 2>/dev/null || echo "0")
+    # KV per token at q4_0 ~0.5 bytes * 48 layers * 2 / 1024^3 = ~0.000045 GB per token
+    local kv_per_token_gb=0.000045
+    local safe_ctx=0
+    local max_ctx=0
+    if [ "$(echo "$kv_budget_90 > 0" | bc -l 2>/dev/null || echo 0)" = "1" ]; then
+      safe_ctx=$(echo "scale=0; $kv_budget_90 / 1000 / $kv_per_token_gb" | bc -l 2>/dev/null || echo 0)
+      max_ctx=$(echo "scale=0; $kv_budget_100 / 1000 / $kv_per_token_gb" | bc -l 2>/dev/null || echo 0)
+    fi
+    # Round to nearest 1024
+    safe_ctx=$(( (safe_ctx / 1024) * 1024 ))
+    max_ctx=$(( (max_ctx / 1024) * 1024 ))
+    [ "$safe_ctx" -lt 1024 ] && safe_ctx=1024
+    [ "$max_ctx" -lt 1024 ] && max_ctx=1024
+    printf "    %4d GB   │  %5d tokens (%dK)                    │  %5d tokens (%dK)\n" \
+      "$vram" "$safe_ctx" "$((safe_ctx/1024))" "$max_ctx" "$((max_ctx/1024))"
+  done
+  echo "════════════════════════════════════════════════════════════════════════════════"
+
+  # ─── Context size selection ────────────────────────────────────────────────────
 echo ""
 echo "Context size options:"
 echo "   1) 98304  (96K)  — maximum long-context"
@@ -413,6 +545,61 @@ esac
         ;;
     esac
   fi
+
+  # ─── VRAM Spillover Analysis (after GPU/KV/ctx selected) ────────────────────────
+  echo ""
+  echo "════════════════════════════════════════════════════════════════════════════════"
+  echo "  VRAM SPILLOVER ANALYSIS"
+  echo "═══════════════════════════════════════════════════════════════════════════════"
+
+  # Get selected GPU VRAM
+  SELECTED_GPU_VRAM_MIB=0
+  if [ -n "$GPU_FLAG" ] && [[ "$GPU_FLAG" =~ --device\ (.+) ]]; then
+    SELECTED_DEVICE="${BASH_REMATCH[1]}"
+    for line in "${VULKAN_DEVICE_LINES[@]}"; do
+      if [[ "$line" =~ ^\  ${SELECTED_DEVICE}: ]]; then
+        SELECTED_GPU_VRAM_MIB=$(parse_gpu_vram_mib "$line")
+        break
+      fi
+    done
+  fi
+
+  # Calculate total VRAM needed
+  KV_VRAM_GB=$(estimate_kv_cache_gb "$NEW_CTX" "$NEW_KV")
+  TOTAL_VRAM_GB=$(echo "scale=2; $MODEL_VRAM_GB + $KV_VRAM_GB" | bc -l 2>/dev/null || echo "0")
+  SELECTED_GPU_VRAM_GB=$(echo "scale=2; $SELECTED_GPU_VRAM_MIB / 1024" | bc -l 2>/dev/null || echo "0")
+
+  echo "  Selected GPU VRAM: ${SELECTED_GPU_VRAM_GB} GB"
+  echo "  Model weights:     ${MODEL_VRAM_GB} GB"
+  echo "  KV cache (${NEW_CTX} ctx, ${NEW_KV}): ${KV_VRAM_GB} GB"
+  echo "  ────────────────────────────────────────────"
+  echo "  Total VRAM needed: ${TOTAL_VRAM_GB} GB"
+
+  # Check for spillover
+  SPILLOVER_GB="0"
+  if [ "$(echo "$TOTAL_VRAM_GB > $SELECTED_GPU_VRAM_GB" | bc -l 2>/dev/null || echo 0)" = "1" ]; then
+    SPILLOVER_GB=$(echo "scale=2; $TOTAL_VRAM_GB - $SELECTED_GPU_VRAM_GB" | bc -l 2>/dev/null || echo "0")
+    echo ""
+    echo "  ⚠️  WARNING: VRAM SPILLOVER DETECTED!"
+    echo "  ⚠️  ${SPILLOVER_GB} GB will spill to system RAM (slower inference)"
+    echo "  ⚠️  llama.cpp will automatically use system RAM when VRAM is exhausted"
+    echo ""
+    echo "  Options to avoid spillover:"
+    echo "    - Reduce context size (current: $NEW_CTX)"
+    echo "    - Use lower KV quantization (current: $NEW_KV)"
+    echo "    - Select a GPU with more VRAM"
+    echo ""
+    read -rp "  Continue with spillover? [y/N]: " SPILLOVER_CONFIRM
+    if [[ ! "$SPILLOVER_CONFIRM" =~ ^[Yy]$ ]]; then
+      echo "  Aborted. Re-run and choose smaller ctx/KV or different GPU."
+      exit 0
+    fi
+  else
+    HEADROOM_GB=$(echo "scale=2; $SELECTED_GPU_VRAM_GB - $TOTAL_VRAM_GB" | bc -l 2>/dev/null || echo "0")
+    echo "  ✓ Fits in VRAM with ${HEADROOM_GB} GB headroom"
+  fi
+
+  echo "════════════════════════════════════════════════════════════════════════════════"
 
   # ─── Speculative decoding method selection ────────────────────────────────────
   if is_mtp_model "$NEW_MODEL"; then
