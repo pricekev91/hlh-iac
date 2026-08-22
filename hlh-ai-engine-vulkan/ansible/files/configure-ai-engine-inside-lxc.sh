@@ -530,6 +530,15 @@ esac
   # ─── Rewrite ExecStart & restart ──────────────────────────────────────────────
   rewrite_execstart "$NEW_MODEL" "$NEW_CTX" "$NEW_KV" "$SPEC_FLAGS" "$GPU_FLAG"
 
+  # Show the exact command that will be executed
+  echo ""
+  echo "  ────────────────────────────────────────────────────────────────────────────"
+  echo "  Exact command being launched (from $SYSTEMD_SERVICE):"
+  # Extract the full ExecStart block (multi-line with backslash continuations)
+  sed -n '/^ExecStart=.*llama-server/,/^Restart=/p' "$SYSTEMD_SERVICE" | head -n -1 | sed 's/^/  /'
+  echo "  ────────────────────────────────────────────────────────────────────────────"
+  echo ""
+
 systemctl daemon-reload
 systemctl restart "$SERVICE"
 
