@@ -192,8 +192,27 @@ cmake -S . -B build \
   -DAMDGPU_TARGETS=gfx1150 \
   -DCMAKE_BUILD_TYPE=Release
 
+echo "[2/7] Checking HIP CMake configuration..."
+if [ ! -f build/CMakeCache.txt ] || ! grep -qi 'GGML_HIP=TRUE' build/CMakeCache.txt 2>/dev/null; then
+  echo "WARNING: HIP may not be enabled in cmake cache; re-running cmake with explicit HIP paths"
+  HIPCXX="${HIPCXX_PATH}" HIP_PATH="${HIP_PATH_VAL}" \
+  cmake -S . -B build \
+    -DGGML_HIP=ON \
+    -DGGML_VULKAN=OFF \
+    -DAMDGPU_TARGETS=gfx1150 \
+    -DCMAKE_BUILD_TYPE=Release
+fi
+
 echo "[2/7] Building... (this can take 10-25 minutes with 12 cores)"
 cmake --build build --config Release -j$(nproc)
+
+# Verify the binary has HIP support
+BINARY_HIP=$(file build/bin/llama-server 2>/dev/null | grep -i hip || true)
+if [ -z "$BINARY_HIP" ]; then
+  echo "WARNING: llama-server binary may not have HIP/ROCm support built in"
+  echo "Checking for HIP-related symbols..."
+  nm build/bin/llama-server 2>/dev/null | grep -i hip || true
+fi
 
 # --- 3. MODEL STORAGE & DOWNLOAD ---
 echo "[3/7] Setting up model directory..."
@@ -256,7 +275,7 @@ Type=simple
 WorkingDirectory=${LLAMA_CPP_DIR}/build/bin
 Environment=HSA_OVERRIDE_GFX_VERSION=${GFX_VERSION}
 Environment=PATH=${ROCM_PATH}/bin:${ROCM_PATH}/llvm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-Environment=LD_LIBRARY_PATH=${ROCM_PATH}/lib
+Environment=LD_LIBRARY_PATH=${ROCM_PATH}/lib:${ROCM_PATH}/lib64
 Environment=ROCM_PATH=${ROCM_PATH}
 Environment=HIP_PATH=${ROCM_PATH}
 ExecStart=${LLAMA_CPP_DIR}/build/bin/llama-server \
@@ -686,6 +705,26 @@ rocm-smi || echo "rocm-smi not found or failed"
 echo ""
 echo "[llama-server version]"
 ${LLAMA_CPP_DIR}/build/bin/llama-server --version || true
+echo ""
+# Verify HIP/ROCm support in the binary
+echo "Checking HIP build support..."
+if nm "${LLAMA_CPP_DIR}/build/bin/llama-server" 2>/dev/null | grep -q i hip; then
+  echo "OK: HIP symbols found in llama-server binary"
+else
+  echo "WARNING: No HIP symbols found in llama-server binary; HIP support may not be enabled"
+fi
+# Verify ROCm environment variables are set for the running process
+echo "Checking ROCm environment..."
+if [ -n "${HSA_OVERRIDE_GFX_VERSION:-}" ]; then
+  echo "OK: HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION} is set"
+else
+  echo "WARNING: HSA_OVERRIDE_GFX_VERSION not set"
+fi
+if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+  echo "OK: LD_LIBRARY_PATH is set"
+else
+  echo "WARNING: LD_LIBRARY_PATH not set"
+fi
 echo ""
 echo "[Service status]"
 systemctl status "$SERVICE_NAME" --no-pager
