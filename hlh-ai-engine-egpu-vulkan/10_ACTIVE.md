@@ -5,7 +5,7 @@ Active items in progress. These are the current focus areas.
 ## Active
 
 - [ ] Validate Vulkan (RADV) GPU passthrough on LXC 130 (RX480 Ellesmere 8GB via OCuLink) with both GPUs visible
-- [ ] Verify 2GB LXC RAM is sufficient for llama.cpp build + runtime (vs 48GB on iGPU)
+- [ ] Verify 8GB LXC RAM is sufficient for llama.cpp Vulkan build (was 2GB→4GB OOM, bumped to 8GB)
 - [ ] Confirm final DNS hostnames for eGPU AI endpoint (192.168.1.30)
 - [ ] Compare eGPU RX480 vs iGPU 890M inference performance (Vulkan)
 

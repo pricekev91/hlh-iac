@@ -59,7 +59,7 @@ variable "cores" {
 variable "memory" {
   description = "Memory in MB"
   type        = number
-  default     = 4096
+  default     = 8192
 }
 
 variable "swap" {
