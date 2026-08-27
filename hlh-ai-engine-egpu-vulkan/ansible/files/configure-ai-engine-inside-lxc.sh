@@ -100,7 +100,19 @@ cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Release
 
 echo "[2/7] Building... (this can take 10-25 minutes with 12 cores)"
-cmake --build build --config Release -j$(nproc)
+# OOM protection: 4GB LXC with -j$(nproc) kills cc1plus (eGPU variant). Cap jobs by RAM.
+# ~1.5GB per cc1plus for ggml-vulkan shaders; reserve 1GB for OS.
+TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+# Approx 1500 MB per job, max 12
+AVAIL_MB=$(( TOTAL_MEM_KB / 1024 - 1024 ))
+if [ "$AVAIL_MB" -lt 1500 ]; then JOBS=1
+elif [ "$AVAIL_MB" -lt 3000 ]; then JOBS=2
+elif [ "$AVAIL_MB" -lt 4500 ]; then JOBS=3
+else JOBS=$(nproc)
+fi
+[ "$JOBS" -gt 12 ] && JOBS=12
+echo "[2/7] Detected ${TOTAL_MEM_KB}kB RAM -> using -j${JOBS} (was -j$(nproc)) to avoid OOM"
+cmake --build build --config Release -j${JOBS}
 
 # --- 3. MODEL STORAGE & DOWNLOAD ---
 echo "[3/7] Setting up model directory..."
