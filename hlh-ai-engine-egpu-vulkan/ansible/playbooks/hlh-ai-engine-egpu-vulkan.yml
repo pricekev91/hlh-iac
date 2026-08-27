@@ -1,0 +1,12 @@
+---
+- name: Configure HLH AI engine (Vulkan eGPU RX480)
+  hosts: hlh_ai_engine_egpu_vulkan
+  become: true
+  vars:
+    hlh_offline: false
+
+  tasks:
+    - name: Run AI engine bootstrap script inside target LXC
+      ansible.builtin.script: ../files/configure-ai-engine-inside-lxc.sh
+      environment:
+        HLH_OFFLINE: "{{ (hlh_offline | bool) | ternary('1', '0') }}"
