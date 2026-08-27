@@ -16,7 +16,7 @@ on discrete graphics.
 - Both iGPU (890M gfx1150) and eGPU are visible inside LXC — selection via `vulkan-switch-model.sh --device`
 - llama.cpp backend serving native web UI on port 80
 - Model storage shared with siblings on `RaidZ1-6TB` ZFS pool (`/srv/ai/models`)
-- LXC memory 2GB (discrete VRAM — no shared-memory APU requirement; vs 48GB on iGPU variant)
+- LXC memory 4GB (discrete VRAM — no shared-memory APU requirement; vs 48GB on iGPU variant)
 
 > **8GB VRAM caveat:** The RX480 has 8GB dedicated VRAM. The default 30B Q4_K_M model (~18GB) will spill to RAM. Use smaller models or 8–16K `ctx-size` + `q4_0` KV for best performance. `vulkan-switch-model.sh` shows spillover analysis.
 
@@ -76,7 +76,7 @@ module "hlh_ai_engine_egpu_vulkan" {
   target_node        = "prox01"
   hostname           = "hlh-ai-engine-egpu-vulkan"
   vmid               = 130
-  # ... other variables (ip_cidr = "192.168.1.30/24", memory = 2048)
+  # ... other variables (ip_cidr = "192.168.1.30/24", memory = 4096)
 }
 ```
 
@@ -91,7 +91,7 @@ module "hlh_ai_engine_egpu_vulkan" {
 | GPU device | `/dev/dri` bind-mount only (no `/dev/kfd`) — both iGPU+eGPU visible |
 | eGPU | RX480 Ellesmere POLARIS10 gfx803 8GB via OCuLink (RADV) |
 | Default model | Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf (spills on 8GB — see caveat) |
-| LXC RAM | 2048 MB (vs 49152 on iGPU variant) |
+| LXC RAM | 4096 MB (vs 49152 on iGPU variant) |
 
 ## Repository Layout
 

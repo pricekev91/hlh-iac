@@ -6,7 +6,7 @@ This is what is already implemented and verified in this repository.
 
 - Direct Proxmox LXC creation via `deploy-hlh-ai-engine-egpu-vulkan.sh` (no OpenTofu required for initial setup)
 - Privileged LXC 130 with hostname `hlh-ai-engine-egpu-vulkan` on `prox01` (192.168.1.10)
-- 2 GiB RAM (down from 48 GiB — discrete 8GB VRAM, no APU shared memory), 12 cores, 64 GiB rootfs on `RaidZ1-6TB` pool
+- 4 GiB RAM (down from 48 GiB — discrete 8GB VRAM, no APU shared memory), 12 cores, 64 GiB rootfs on `RaidZ1-6TB` pool
 - Static IP assignment: `192.168.1.30/24` gw `192.168.1.1`
 - Nesting and keyctl features enabled
 - Prompt-before-redeploy guard prevents accidental LXC recreation
@@ -55,7 +55,7 @@ This is what is already implemented and verified in this repository.
 ## OpenTofu Provisioning
 
 - Proxmox provider: `telmate/proxmox >= 2.7.2`
-- LXC resource `hlh_ai_engine_egpu_vulkan` with `vmid=130`, `memory=2048`, `gpu=gfx803`
+- LXC resource `hlh_ai_engine_egpu_vulkan` with `vmid=130`, `memory=4096`, `gpu=gfx803`
 - Variables for API URL, token auth, network (192.168.1.30/24), and storage (RaidZ1-6TB)
 - GPU passthrough (cgroup allow + mount entries) documented for manual `pct set` path
 
