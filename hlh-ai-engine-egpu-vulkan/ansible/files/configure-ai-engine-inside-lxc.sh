@@ -777,19 +777,21 @@ fi
 EOS
 chmod +x "$SWITCH_SCRIPT"
 
-# --- 5b. eGPU helper: pin to RX480 regardless of Vulkan index ---
-echo "[5/7] Creating eGPU RX480 helper: /usr/local/bin/egpu-hlh-ai-engine-vulkan.sh + ${MODEL_DIR}/..."
-EGPU_HELPER="/usr/local/bin/egpu-hlh-ai-engine-vulkan.sh"
-cat > "$EGPU_HELPER" << 'EOS_EGPU'
+# --- 5b. eGPU helper: pin to RX480 regardless of backend ---
+# Only create if missing — the helper is a stable utility, no need to overwrite on rebuild.
+EGPU_HELPER="/usr/local/bin/egpu-switch-model.sh"
+if [ ! -f "$EGPU_HELPER" ]; then
+  echo "[5/7] Creating eGPU RX480 helper: $EGPU_HELPER + ${MODEL_DIR}/..."
+  cat > "$EGPU_HELPER" << 'EOS_EGPU'
 #!/usr/bin/env bash
-# egpu-hlh-ai-engine-vulkan.sh
+# egpu-switch-model.sh
 # Version: 1.0.0-egpu
-# Description: Helper to target the RX480 eGPU (Ellesmere/POLARIS10/gfx803 8GB) regardless of Vulkan index
+# Description: Helper to target the RX480 eGPU (Ellesmere/POLARIS10/gfx803 8GB) regardless of llama.cpp backend
 # Usage:
-#   egpu-hlh-ai-engine-vulkan.sh              # detect and show RX480 Vulkan device
-#   egpu-hlh-ai-engine-vulkan.sh --device-only # print only "--device VulkanX" (for scripting)
-#   egpu-hlh-ai-engine-vulkan.sh --apply       # patch ai-engine service to use RX480 and restart
-#   egpu-hlh-ai-engine-vulkan.sh --apply --ctx-size 8192 --cache-type-k q4_0  # (future: keep current ctx/kv if not given)
+#   egpu-switch-model.sh              # detect and show RX480 device
+#   egpu-switch-model.sh --device-only # print only "--device VulkanX" (for scripting)
+#   egpu-switch-model.sh --apply       # patch ai-engine service to use RX480 and restart
+#   egpu-switch-model.sh --apply --ctx-size 8192 --cache-type-k q4_0  # (future: keep current ctx/kv if not given)
 # Detection order:
 #   1) llama-server --list-devices line matching RX ?480|Ellesmere|POLARIS10|gfx803 (case-insensitive)
 #   2) fallback: line with 8192 MiB (RX480 is 8GB, 890M iGPU varies)
@@ -803,7 +805,7 @@ if [[ "${1:-}" == "--device-only" ]]; then MODE="device-only"; shift || true
 elif [[ "${1:-}" == "--apply" ]]; then MODE="apply"; shift || true
 elif [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   cat <<'HELP'
-Usage: egpu-hlh-ai-engine-vulkan.sh [OPTION]
+Usage: egpu-switch-model.sh [OPTION]
   (no args)      Detect and show RX480 Vulkan device
   --device-only  Print only "--device VulkanX" for scripting
   --apply        Patch /etc/systemd/system/ai-engine.service ExecStart to pin --device to RX480 and restart
@@ -947,10 +949,11 @@ if [ "$MODE" == "apply" ]; then
   fi
 fi
 EOS_EGPU
-chmod +x "$EGPU_HELPER"
-# Copy to shared model storage (visible on host and all LXCs)
-cp "$EGPU_HELPER" "${MODEL_DIR}/egpu-hlh-ai-engine-vulkan.sh"
-chmod +x "${MODEL_DIR}/egpu-hlh-ai-engine-vulkan.sh"
+  chmod +x "$EGPU_HELPER"
+  # Copy to shared model storage (visible on host and all LXCs)
+  cp "$EGPU_HELPER" "${MODEL_DIR}/egpu-switch-model.sh"
+  chmod +x "${MODEL_DIR}/egpu-switch-model.sh"
+fi
 
 # --- 6. ENABLE & START SERVICE ---
 echo "[6/7] Enabling and starting $SERVICE_NAME..."
@@ -972,5 +975,6 @@ echo ""
 echo "[Bootstrap complete - v1.0.3-egpu]"
 echo "  Native llama.cpp web UI : http://<container-ip>:80 (LXC 130 -> 192.168.1.30:80)"
 echo "  Switch models with      : vulkan-switch-model.sh (v1.9.0: VRAM spillover analysis + CTX suggestions + exact cmd)"
+echo "  Pin eGPU to RX480       : egpu-switch-model.sh (backend-agnostic, persists across rebuilds)"
 echo "  GPU backend             : Vulkan (RADV via Mesa, gfx803 Ellesmere RX480 8GB via OCuLink; iGPU gfx1150 also visible)"
 echo "  NOTE: eGPU has 8GB dedicated VRAM — large 30B models will spill to RAM. Use 8-16K ctx + q4_0."

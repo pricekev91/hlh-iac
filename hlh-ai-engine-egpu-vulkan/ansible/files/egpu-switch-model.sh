@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# switch-model.sh
+# egpu-switch-model.sh
 # Version: 1.6.1-egpu
 # Description: Interactive model switcher for llama.cpp ai-engine service (eGPU RX480 variant)
-# Target: RX480 Ellesmere POLARIS10 8GB via OCuLink - auto-pins --device to RX480
+# Auto-pins --device to RX480 regardless of llama.cpp backend (Vulkan/ROCm/CUDA/etc.)
 # Supports: model selection, ctx-size, KV cache quantization, speculative decoding method (MTP draft / ngram / DFlash2 / none)
 # Changelog:
 #   1.6.1 - Fixed readiness check: probe /health HTTP endpoint instead of
@@ -98,7 +98,7 @@ is_moe_model() {
 # (e.g. "--spec-type ngram-mod --spec-ngram-mod-n-match 24 ...").
 # ─── eGPU Detection ──────────────────────────────────────────────────────────
 # Auto-detect RX480 (Ellesmere/POLARIS10/gfx803 8GB) via llama-server --list-devices.
-# No interactive GPU selection - always pins to RX480 regardless of Vulkan index.
+# No interactive GPU selection - always pins to RX480 regardless of backend device index.
 detect_rx480_device() {
   local llama_bin="/opt/llama.cpp/build/bin/llama-server"
   local lines=()
@@ -177,7 +177,7 @@ rewrite_execstart() {
 # ─── Banner ────────────────────────────────────────────────────────────────────
 echo ""
 echo "╔══════════════════════════════════════════════════════════════════╗"
-echo "║                egpu-hlh-ai-engine-vulkan.sh (RX480)           ║"
+echo "║                egpu-switch-model.sh (RX480)                   ║"
 echo "╠══════════════════════════════════════════════════════════════════╣"
 echo "║  VRAM BUDGET REFERENCE  (model weights + KV cache = total need)  ║"
 echo "║                                                                  ║"
