@@ -777,10 +777,6 @@ fi
 EOS
 chmod +x "$SWITCH_SCRIPT"
 
-# Keep /srv/ai/models/vulkan-switch-model.sh in sync (both locations exist on this host)
-cp "$SWITCH_SCRIPT" "${MODEL_DIR}/vulkan-switch-model.sh"
-chmod +x "${MODEL_DIR}/vulkan-switch-model.sh"
-
 # --- 5b. eGPU helper: pin to RX480 regardless of Vulkan index ---
 echo "[5/7] Creating eGPU RX480 helper: /usr/local/bin/egpu-hlh-ai-engine-vulkan.sh + ${MODEL_DIR}/..."
 EGPU_HELPER="/usr/local/bin/egpu-hlh-ai-engine-vulkan.sh"
@@ -955,13 +951,6 @@ chmod +x "$EGPU_HELPER"
 # Copy to shared model storage (visible on host and all LXCs)
 cp "$EGPU_HELPER" "${MODEL_DIR}/egpu-hlh-ai-engine-vulkan.sh"
 chmod +x "${MODEL_DIR}/egpu-hlh-ai-engine-vulkan.sh"
-# Alias for user typo vuklan -> vulkan
-cp "$EGPU_HELPER" "${MODEL_DIR}/egpu-hlh-ai-engine-vuklan.sh"
-chmod +x "${MODEL_DIR}/egpu-hlh-ai-engine-vuklan.sh"
-cp "$EGPU_HELPER" "/usr/local/bin/egpu-hlh-ai-engine-vuklan.sh"
-chmod +x "/usr/local/bin/egpu-hlh-ai-engine-vuklan.sh"
-ln -sf egpu-hlh-ai-engine-vulkan.sh /usr/local/bin/egpu-rx480.sh 2>/dev/null || true
-ln -sf egpu-hlh-ai-engine-vulkan.sh "${MODEL_DIR}/egpu-rx480.sh" 2>/dev/null || true
 
 # --- 6. ENABLE & START SERVICE ---
 echo "[6/7] Enabling and starting $SERVICE_NAME..."
