@@ -95,13 +95,23 @@ pct create "${LXC_ID}" "${LXC_IMAGE}" \
 	--description "llama.cpp AI engine with ROCm ${ROCM_VERSION}, model storage on ${POOL} (Qwen3-Coder-30B)"
 
 echo "[3/6] Adding GPU/ROCm passthrough devices..."
+# Only the 890M iGPU (gfx1150): card1 (226:1) + renderD129 (226:129)
+# RX 480 eGPU (gfx803) nodes are intentionally excluded so ROCm cannot
+# enumerate the unsupported device as GPU 0 and fail the entire init chain.
+# KFD is shared (511:0) but ROCm only sees GPUs that have a visible renderD.
 cat >> "/etc/pve/lxc/${LXC_ID}.conf" <<'LXCCONF'
 
-# GPU passthrough - DRI (render) + KFD (ROCm/HIP compute)
-# KFD major on this host: 511
-lxc.cgroup2.devices.allow: c 226:* rwm
+# GPU passthrough - 890M iGPU only (gfx1150/Strix Halo)
+# RX 480 eGPU (gfx803) excluded: ROCm 7.x drops gfx803 and errors out
+# when it appears as GPU 0, preventing the 890M from ever being reached.
+# cgroup allow: only card1 (226:1) and renderD129 (226:129)
+lxc.cgroup2.devices.allow: c 226:1 rwm
+lxc.cgroup2.devices.allow: c 226:129 rwm
 lxc.cgroup2.devices.allow: c 511:0 rwm
-lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir
+# Mount empty /dev/dri dir, then the specific 890M nodes only
+lxc.mount.entry: none dev/dri none bind,optional,create=dir
+lxc.mount.entry: /dev/dri/card1 dev/dri/card1 none bind,optional,create=file
+lxc.mount.entry: /dev/dri/renderD129 dev/dri/renderD129 none bind,optional,create=file
 lxc.mount.entry: /dev/kfd dev/kfd none bind,optional,create=file
 LXCCONF
 
