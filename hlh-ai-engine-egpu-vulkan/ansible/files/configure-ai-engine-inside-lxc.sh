@@ -23,8 +23,8 @@ set -euo pipefail
 
 # --- CONFIGURABLE ---
 MODEL_DIR="/srv/ai/models"
-DEFAULT_MODEL_URL="https://huggingface.co/bartowski/Qwen2.5-Coder-32B-Instruct-GGUF/resolve/main/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
-DEFAULT_MODEL_FILE="Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+DEFAULT_MODEL_URL=""
+DEFAULT_MODEL_FILE="Mellum2-12B-A2.5B-Thinking-Q3_K_M.gguf"
 LLAMA_CPP_REPO="https://github.com/ggerganov/llama.cpp.git"
 LLAMA_CPP_DIR="/opt/llama.cpp"
 SERVICE_NAME="ai-engine"
@@ -126,6 +126,7 @@ if [ -f "${MODEL_DIR}/${DEFAULT_MODEL_FILE}" ]; then
   echo "Default model already present: $ACTIVE_MODEL_FILE"
 else
   PREFERRED_MODELS=(
+    "Mellum2-12B-A2.5B-Thinking-Q3_K_M.gguf"
     "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
     "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf"
     "Qwen_Qwen3-Coder-Next-Q4_K_M.gguf"
@@ -164,7 +165,7 @@ WorkingDirectory=${LLAMA_CPP_DIR}/build/bin
 ExecStart=${LLAMA_CPP_DIR}/build/bin/llama-server \
   --model ${MODEL_DIR}/${ACTIVE_MODEL_FILE} \
   --host 0.0.0.0 --port 80 \
-  --ctx-size 4096 \
+  --ctx-size 65536 \
   -ngl 48 \
   --batch-size 128 \
   --parallel 1 \
@@ -808,7 +809,7 @@ Usage: egpu-switch-model.sh [OPTION]
   --apply        Patch /etc/systemd/system/ai-engine.service ExecStart to pin --device and restart
   --help         This help
 Detection uses: llama-server --list-devices — uses the first available Vulkan device.
-This LXC only sees one GPU (the eGPU via native PCI passthrough).
+This LXC only sees one GPU (the eGPU via cgroup + /dev/dri bind-mount).
 HELP
   exit 0
 fi
@@ -864,7 +865,7 @@ if [ "$MODE" == "apply" ]; then
   fi
   # Extract current model/ctx/kv/spec to keep
   CUR_MODEL=$(grep -- '--model ' "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--model") print $(i+1)}')
-  CUR_CTX=$(grep -- '--ctx-size ' "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--ctx-size") print $(i+1)}' || echo "4096")
+  CUR_CTX=$(grep -- '--ctx-size ' "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--ctx-size") print $(i+1)}' || echo "65536")
   CUR_KV_K=$(grep -- '--cache-type-k ' "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--cache-type-k") print $(i+1)}' || echo "q4_0")
   CUR_SPEC=$(grep -- '--spec-type ' "$SYSTEMD_SERVICE" | sed -n 's/.*--spec-type \([^ ]*\).*/\1/p' || true)
   SPEC_FLAGS=""
@@ -938,5 +939,5 @@ echo "[Bootstrap complete - v2.0.0-egpu-card-agnostic]"
 echo "  Native llama.cpp web UI : http://<container-ip>:80 (LXC 130 -> 192.168.1.30:80)"
 echo "  Switch models with      : vulkan-switch-model.sh (v1.9.0: VRAM spillover analysis + CTX suggestions + exact cmd)"
 echo "  Pin eGPU to detected GPU : egpu-switch-model.sh (card-agnostic, persists across rebuilds)"
-echo "  GPU backend             : Vulkan — first available GPU via native PCI passthrough (eGPU only; iGPU isolated)"
+echo "  GPU backend             : Vulkan — cgroup + /dev/dri bind-mount (eGPU only; iGPU isolated)"
 echo "  NOTE: VRAM depends on the GPU model — use ctx/q4_0 to stay within limits."

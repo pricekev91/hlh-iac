@@ -12,13 +12,13 @@ Usage:
 This is the direct Proxmox bootstrap path (no OpenTofu):
 	1) Detect eGPU PCI address via lspci (any card on OCuLink)
   2) Create privileged LXC 130 (hlh-ai-engine-egpu-vulkan)
-  3) Add native Proxmox PCI passthrough for entire eGPU IOMMU group
+  3) Add cgroup device-allow + bind-mount for GPU access (eGPU via OCuLink)
   4) Start container
   5) Push/run in-container bootstrap script
 
 NOTE: The LXC ONLY sees the eGPU — the iGPU (890M) is isolated by not being in
-the same IOMMU group. The passthrough is card-agnostic: swap the GPU card and the
-same PCI address will be used (it's the OCuLink connector's physical address).
+the same IOMMU group. GPU access uses cgroup device-allow + /dev/dri bind-mount
+(card-agnostic): swap the GPU card and it will be detected automatically.
 EOF
 }
 
@@ -55,12 +55,17 @@ detect_egpu_pci() {
 get_iommu_group_devices() {
   local pci="$1"
   local iommu_link
-  iommu_link=$(readlink "/sys/bus/pci/devices/0000:$pci/iommu_group" 2>/dev/null)
+  # Note: $pci already includes the '0000:' bus prefix (e.g. 0000:c5:00.0),
+  # so we do NOT prepend another one.
+  iommu_link=$(readlink "/sys/bus/pci/devices/${pci}/iommu_group" 2>/dev/null)
   if [ -z "$iommu_link" ]; then
     echo "ERROR: Could not find IOMMU group for $pci" >&2
     exit 1
   fi
-  ls "$iommu_link/devices/" 2>/dev/null
+  # readlink may return a relative symlink; resolve it properly.
+  local iommu_dir
+  iommu_dir=$(realpath "$(dirname "/sys/bus/pci/devices/${pci}/iommu_group")"/"$iommu_link" 2>/dev/null || echo "$iommu_link")
+  ls "${iommu_dir}/devices/" 2>/dev/null
 }
 
 while [[ $# -gt 0 ]]; do
@@ -126,23 +131,23 @@ pct create "${LXC_ID}" "${LXC_IMAGE}" \
 	--mp0 "${MODEL_HOST_DIR},mp=${MODEL_LXC_DIR}" \
 	--description "llama.cpp AI engine with Vulkan (generic eGPU via OCuLink), model storage on ${POOL}"
 
-echo "[3/6] Detecting eGPU and adding native PCI passthrough..."
+echo "[3/6] Detecting eGPU and configuring GPU access via cgroup bind-mount..."
 EGPU_PCI=$(detect_egpu_pci)
 echo "  Detected eGPU PCI address: $EGPU_PCI"
 
 IOMMU_DEVICES=$(get_iommu_group_devices "$EGPU_PCI")
 echo "  IOMMU group devices (all will be passed through): $IOMMU_DEVICES"
 
-# Add native Proxmox PCI passthrough for EVERY device in the IOMMU group.
-# This is card-agnostic: any GPU plugged into the OCuLink dock will enumerate
-# at the same physical PCIe address, and the entire IOMMU group is passed through
-# so companion devices (audio, USB controllers if on the dock) are included too.
-IDX=0
-for dev in $IOMMU_DEVICES; do
-  echo "  hostpci$IDX: host=0000:$dev" >> "/etc/pve/lxc/${LXC_ID}.conf"
-  IDX=$((IDX + 1))
-done
-echo "  Added $IDX native PCI passthrough devices to LXC conf"
+# Proxmox 9.x does not support hostpci for containers, so we use the
+# cgroup device-allow + bind-mount approach (same as LXC 120).
+#   - lxc.cgroup2.devices.allow: c 226:* rwm → allow all DRM char devices (card0, card1, renderD*)
+#   - lxc.mount.entry: /dev/dri → bind-mount the host's /dev/dri into the container
+#   - vfio-pci must own the GPU so it does NOT appear as card0 on the host
+#
+# This approach is card-agnostic: any GPU on the OCuLink dock will expose
+# /dev/dri nodes that get mounted into the container.
+echo "lxc.cgroup2.devices.allow: c 226:* rwm" >> "/etc/pve/lxc/${LXC_ID}.conf"
+echo "lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir" >> "/etc/pve/lxc/${LXC_ID}.conf"
 
 echo "[4/6] Starting LXC ${LXC_ID}..."
 pct start "${LXC_ID}"

@@ -13,6 +13,8 @@ in the codebase.
 
 ## Model Management
 
+- [DONE] Mellum2-12B-A2.5B-Thinking-Q3_K_M.gguf as default model (~54 tok/s on eGPU)
+- [DONE] Default model path: /srv/ai/models/Mellum2-12B-A2.5B-Thinking-Q3_K_M.gguf (4.9GB on RaidZ1-6TB)
 - Add model versioning system (pin specific GGUF files per deployment) — prefer 7B-14B for 8GB eGPU
 - Add model download progress tracking and resume support
 - Add model quality scoring after inference testing
@@ -20,6 +22,8 @@ in the codebase.
 
 ## LXC Lifecycle
 
+- [DONE] Switched from native hostpci passthrough to cgroup device-allow + /dev/dri bind-mount (Proxmox 9.x compatible, card-agnostic)
+- [DONE] Fixed deploy script leading spaces causing "unable to parse config" errors
 - Add LXC snapshot before major model updates
 - Add LXC resource quota enforcement (CPU, memory, I/O)
 - Add LXC snapshot restore procedure
@@ -40,6 +44,7 @@ in the codebase.
 
 ## Networking
 
+- [DONE] LXC 130 hostname: hlh-ai-engine-egpu-vulkan, IP: 192.168.1.30, port 80
 - Add DNS entry for engine API endpoint (egpu: hlh-ai-engine-egpu-vulkan.local / 192.168.1.30)
 - Add HTTPS/TLS termination on nginx reverse proxy
 - Add rate limiting configuration for API endpoints

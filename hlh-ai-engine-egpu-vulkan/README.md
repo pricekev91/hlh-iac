@@ -18,7 +18,7 @@ on discrete graphics.
 - Model storage shared with siblings on `RaidZ1-6TB` ZFS pool (`/srv/ai/models`)
 - LXC memory 8GB (discrete VRAM — no shared-memory APU requirement; vs 48GB on iGPU variant)
 
-> **8GB VRAM caveat:** The RX480 has 8GB dedicated VRAM. The default 30B Q4_K_M model (~18GB) will spill to RAM. Use smaller models or 8–16K `ctx-size` + `q4_0` KV for best performance. `vulkan-switch-model.sh` shows spillover analysis.
+> **8GB VRAM caveat:** The RX480 has 8GB dedicated VRAM. Context window is 64K by default (q4_0 KV cache ≈ 0.5 GB). Use `vulkan-switch-model.sh` to adjust ctx-size and see spillover analysis.
 
 ## Repository Boundary
 
@@ -135,7 +135,7 @@ Default llama-server flags (from systemd unit):
 | `--model` | mounted GGUF path | Model file |
 | `--host` | `0.0.0.0` | Listen on all interfaces |
 | `--port` | `80` | Native web UI + API port |
-| `--ctx-size` | `4096` | Context window (switch via `vulkan-switch-model.sh`) |
+| `--ctx-size` | `65536` (64K) | Context window (switch via `vulkan-switch-model.sh`) |
 | `-ngl` | `48` | GPU offload layers |
 | `--batch-size` | `128` | Batch size for inference |
 | `--parallel` | `1` | Request parallelism |

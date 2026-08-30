@@ -4,14 +4,16 @@ Active items in progress. These are the current focus areas.
 
 ## Active
 
-- [ ] Validate Vulkan (RADV) GPU passthrough on LXC 130 (RX480 Ellesmere 8GB via OCuLink) with both GPUs visible
-- [ ] Verify 8GB LXC RAM is sufficient for llama.cpp Vulkan build (was 2GB→4GB OOM, bumped to 8GB)
-- [ ] Confirm final DNS hostnames for eGPU AI endpoint (192.168.1.30)
+- [x] ✅ GPU passthrough working: cgroup device-allow + `/dev/dri` bind-mount (card-agnostic)
+- [x] ✅ Vulkan backend confirmed: ~54 tok/s on eGPU (RX480/0000:c5:00.0) via RADV
+- [x] ✅ Mellum2-12B-A2.5B-Thinking-Q3_K_M.gguf as default model
+- [x] ✅ Service running: `ai-engine` on port 80 (llama.cpp web UI)
+- [ ] Deploy fix for leading spaces in cgroup/mount lines → prevents Proxmox 9.x parse errors
 - [ ] Compare eGPU RX480 vs iGPU 890M inference performance (Vulkan)
 
 ## This Week
 
-- [ ] Run deploy-hlh-ai-engine-egpu-vulkan.sh on prox01 to verify LXC 130 creation flow (full cycle)
-- [ ] Test model switching after LXC bootstrap (vulkan-switch-model.sh — verify both Vulkan devices enumerated)
-- [ ] Validate Mesa RADV driver compatibility for gfx803 Polaris10 on latest amdgpu kernel
-- [ ] Test spillover behavior with 30B Q4_K_M on 8GB VRAM (expect RAM spill)
+- [ ] Run full deploy-hlh-ai-engine-egpu-vulkan.sh cycle (destroy→recreate→bootstrap)
+- [ ] Test model switching after LXC bootstrap (vulkan-switch-model.sh)
+- [ ] Validate spillover behavior with larger models (30B Q4_K_M → expects RAM spill)
+- [ ] Verify GPU pinning persists across container rebuilds
