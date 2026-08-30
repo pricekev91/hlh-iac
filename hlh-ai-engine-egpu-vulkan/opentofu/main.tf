@@ -47,11 +47,16 @@ resource "proxmox_lxc" "hlh_ai_engine_egpu_vulkan" {
     size    = "${var.rootfs_size_gb}G"
   }
 
-  # GPU passthrough - eGPU AMD Ellesmere RX480 (POLARIS10 gfx803) via OCuLink
-  # + iGPU remains visible (both /dev/dri devices) — selection via Vulkan --device
+  # Native PCI passthrough - eGPU via OCuLink (card-agnostic)
+  # Passes through the entire IOMMU group containing the OCuLink-connected GPU.
+  # The PCI address is the physical OCuLink connector address — stable across
+  # card swaps (RX480 -> NVIDIA K80 -> AMD MI60, etc.).
+  # The iGPU (890M on bus c6) is NOT in this IOMMU group, so it's isolated.
+  # NOTE: if the IOMMU group has multiple devices (GPU + audio companion), add
+  # additional device blocks with incrementing hostpciN names.
   device {
-    name = "gpu0"
-    gpu  = "gfx803"
+    name = "hostpci0"
+    id   = var.egpu_pci_address
   }
 
   # Model storage volume mount (host /srv/ai/models -> LXC /srv/ai/models)

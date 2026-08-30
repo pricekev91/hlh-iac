@@ -777,25 +777,22 @@ fi
 EOS
 chmod +x "$SWITCH_SCRIPT"
 
-# --- 5b. eGPU helper: pin to RX480 regardless of backend ---
+# --- 5b. eGPU helper: pin to detected eGPU regardless of backend ---
 # Only create if missing — the helper is a stable utility, no need to overwrite on rebuild.
 EGPU_HELPER="/usr/local/bin/egpu-switch-model.sh"
 if [ ! -f "$EGPU_HELPER" ]; then
-  echo "[5/7] Creating eGPU RX480 helper: $EGPU_HELPER + ${MODEL_DIR}/..."
+  echo "[5/7] Creating eGPU helper: $EGPU_HELPER + ${MODEL_DIR}/..."
   cat > "$EGPU_HELPER" << 'EOS_EGPU'
 #!/usr/bin/env bash
 # egpu-switch-model.sh
 # Version: 1.0.0-egpu
-# Description: Helper to target the RX480 eGPU (Ellesmere/POLARIS10/gfx803 8GB) regardless of llama.cpp backend
+# Description: Helper to target the detected eGPU regardless of llama.cpp backend
+# Card-agnostic: works with RX480, NVIDIA K80, AMD MI60, or any Vulkan-capable GPU.
 # Usage:
-#   egpu-switch-model.sh              # detect and show RX480 device
+#   egpu-switch-model.sh              # detect and show eGPU device
 #   egpu-switch-model.sh --device-only # print only "--device VulkanX" (for scripting)
-#   egpu-switch-model.sh --apply       # patch ai-engine service to use RX480 and restart
-#   egpu-switch-model.sh --apply --ctx-size 8192 --cache-type-k q4_0  # (future: keep current ctx/kv if not given)
-# Detection order:
-#   1) llama-server --list-devices line matching RX ?480|Ellesmere|POLARIS10|gfx803 (case-insensitive)
-#   2) fallback: line with 8192 MiB (RX480 is 8GB, 890M iGPU varies)
-#   3) fallback: first AMD/RADV device
+#   egpu-switch-model.sh --apply       # patch ai-engine service to use eGPU and restart
+# Detection: uses the first available Vulkan device (only one eGPU is visible in this LXC).
 set -euo pipefail
 SERVICE="ai-engine"
 SYSTEMD_SERVICE="/etc/systemd/system/${SERVICE}.service"
@@ -806,12 +803,12 @@ elif [[ "${1:-}" == "--apply" ]]; then MODE="apply"; shift || true
 elif [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   cat <<'HELP'
 Usage: egpu-switch-model.sh [OPTION]
-  (no args)      Detect and show RX480 Vulkan device
+  (no args)      Detect and show eGPU Vulkan device
   --device-only  Print only "--device VulkanX" for scripting
-  --apply        Patch /etc/systemd/system/ai-engine.service ExecStart to pin --device to RX480 and restart
+  --apply        Patch /etc/systemd/system/ai-engine.service ExecStart to pin --device and restart
   --help         This help
-Detection uses: llama-server --list-devices, matches RX 480 / Ellesmere / POLARIS10 / gfx803.
-Both iGPU (890M gfx1150) and eGPU (RX480) are exposed via /dev/dri; this pins to the eGPU.
+Detection uses: llama-server --list-devices — uses the first available Vulkan device.
+This LXC only sees one GPU (the eGPU via native PCI passthrough).
 HELP
   exit 0
 fi
@@ -832,58 +829,27 @@ fi
 echo "Detected Vulkan devices:" >&2
 for l in "${VULKAN_LINES[@]}"; do echo "  $l" >&2; done
 
-# Try exact RX480 match
-RX_LINE=""
-for l in "${VULKAN_LINES[@]}"; do
-  if echo "$l" | grep -qiE 'RX ?480|Ellesmere|POLARIS10|gfx803'; then
-    RX_LINE="$l"
-    break
-  fi
-done
-# Fallback: 8192 MiB (RX480 8GB)
-if [ -z "$RX_LINE" ]; then
-  for l in "${VULKAN_LINES[@]}"; do
-    if echo "$l" | grep -q '8192 MiB'; then
-      RX_LINE="$l"
-      echo "INFO: No exact RX480 string match, using 8192 MiB fallback -> $l" >&2
-      break
-    fi
-  done
-fi
-# Fallback: first RADV/AMD line
-if [ -z "$RX_LINE" ]; then
-  for l in "${VULKAN_LINES[@]}"; do
-    if echo "$l" | grep -qiE 'AMD|RADV'; then
-      RX_LINE="$l"
-      echo "INFO: Using first AMD/RADV fallback -> $l" >&2
-      break
-    fi
-  done
-fi
-if [ -z "$RX_LINE" ]; then
-  RX_LINE="${VULKAN_LINES[0]}"
-  echo "WARNING: No AMD match, using first device -> $RX_LINE" >&2
-fi
+# Use the first available Vulkan device (only one eGPU in this LXC).
+E_GPU_LINE="${VULKAN_LINES[0]}"
 
 # Extract VulkanX id: "  Vulkan1: ..." -> Vulkan1
-RX_DEVICE=$(echo "$RX_LINE" | sed -n 's/^  \(Vulkan[0-9]\+\):.*/\1/p')
-if [ -z "$RX_DEVICE" ]; then
-  # try vulkaninfo fallback format
-  RX_DEVICE="Vulkan0"
+E_GPU_DEVICE=$(echo "$E_GPU_LINE" | sed -n 's/^  \(Vulkan[0-9]\+\):.*/\1/p')
+if [ -z "$E_GPU_DEVICE" ]; then
+  E_GPU_DEVICE="Vulkan0"
   echo "WARNING: Could not parse Vulkan id, defaulting to Vulkan0" >&2
 fi
 
-RX_INFO=$(echo "$RX_LINE" | cut -d: -f2- | sed 's/^ //')
+E_GPU_INFO=$(echo "$E_GPU_LINE" | cut -d: -f2- | sed 's/^ //')
 echo "" >&2
-echo "RX480 target: $RX_DEVICE — $RX_INFO" >&2
+echo "eGPU target: $E_GPU_DEVICE — $E_GPU_INFO" >&2
 
 if [ "$MODE" == "device-only" ]; then
-  echo "--device $RX_DEVICE"
+  echo "--device $E_GPU_DEVICE"
   exit 0
 fi
 if [ "$MODE" == "show" ]; then
   echo ""
-  echo "Use: --device $RX_DEVICE  (e.g. llama-server --device $RX_DEVICE --model ... )"
+  echo "Use: --device $E_GPU_DEVICE  (e.g. llama-server --device $E_GPU_DEVICE --model ... )"
   echo "To pin ai-engine service: sudo $0 --apply"
   # also show current service pin
   CUR_GPU=$(grep -- '--device ' "$SYSTEMD_SERVICE" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="--device") print $(i+1)}' || echo "both (split)")
@@ -891,22 +857,21 @@ if [ "$MODE" == "show" ]; then
   exit 0
 fi
 
-# --apply: patch systemd service ExecStart to use RX480
+# --apply: patch systemd service ExecStart to use detected eGPU
 if [ "$MODE" == "apply" ]; then
   if [ ! -f "$SYSTEMD_SERVICE" ]; then
     echo "ERROR: $SYSTEMD_SERVICE not found" >&2; exit 1
   fi
-  # Extract current model/ctx/kv/spec to keep (reuse awk rewrite logic from vulkan-switch-model.sh)
+  # Extract current model/ctx/kv/spec to keep
   CUR_MODEL=$(grep -- '--model ' "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--model") print $(i+1)}')
   CUR_CTX=$(grep -- '--ctx-size ' "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--ctx-size") print $(i+1)}' || echo "4096")
   CUR_KV_K=$(grep -- '--cache-type-k ' "$SYSTEMD_SERVICE" | awk '{for(i=1;i<=NF;i++) if ($i=="--cache-type-k") print $(i+1)}' || echo "q4_0")
   CUR_SPEC=$(grep -- '--spec-type ' "$SYSTEMD_SERVICE" | sed -n 's/.*--spec-type \([^ ]*\).*/\1/p' || true)
   SPEC_FLAGS=""
   if [ -n "$CUR_SPEC" ]; then
-    # preserve spec line roughly (simplified: keep current spec-type if present)
     SPEC_FLAGS=$(grep -o -- '--spec-type[^\\]*' "$SYSTEMD_SERVICE" | head -1 | sed 's/ *\\$//' | xargs || true)
   fi
-  GPU_FLAG="--device $RX_DEVICE"
+  GPU_FLAG="--device $E_GPU_DEVICE"
   echo "Patching $SYSTEMD_SERVICE to pin $GPU_FLAG (keeping model=$CUR_MODEL ctx=$CUR_CTX kv=$CUR_KV_K)..." >&2
 
   # Minimal sed-free awk rewrite: replace or inject --device
@@ -918,9 +883,7 @@ if [ "$MODE" == "apply" ]; then
     in_block {
       if (/--device /) { sub(/--device [^ \\]*/, gpu); in_block=0; print; next }
       if (/\\$/) { print; next }
-      # end of ExecStart block (next is Restart=) -> inject gpu flag before --parallel or at end
       if (/^Restart=/) {
-        # inject before Restart if no --device was found yet
         print "  " gpu " \\"
         in_block=0
         print
@@ -930,7 +893,6 @@ if [ "$MODE" == "apply" ]; then
     }
     {print}
   ' "$SYSTEMD_SERVICE" > "$tmp" || { rm -f "$tmp"; echo "ERROR: awk rewrite failed" >&2; exit 1; }
-  # If still no --device, ensure it is present (fallback injection before --parallel)
   if ! grep -q -- '--device ' "$tmp"; then
     awk -v gpu="$GPU_FLAG" '{ if (/--parallel 1/) sub(/--parallel 1/, gpu " --parallel 1"); print }' "$tmp" > "${tmp}.2" && mv "${tmp}.2" "$tmp"
   fi
@@ -941,7 +903,7 @@ if [ "$MODE" == "apply" ]; then
   systemctl restart "$SERVICE"
   for i in {1..15}; do systemctl is-active --quiet "$SERVICE" && break; sleep 2; done
   if systemctl is-active --quiet "$SERVICE"; then
-    echo "[✓] ai-engine now pinned to $RX_DEVICE ($RX_INFO)" >&2
+    echo "[✓] ai-engine now pinned to $E_GPU_DEVICE ($E_GPU_INFO)" >&2
     echo "Web UI: http://$(hostname -I | awk '{print $1}'):80" >&2
   else
     echo "[✗] Service failed to start after pinning. Check journalctl -u $SERVICE -f" >&2
@@ -972,9 +934,9 @@ echo ""
 echo "[Service status]"
 systemctl status "$SERVICE_NAME" --no-pager
 echo ""
-echo "[Bootstrap complete - v1.0.3-egpu]"
+echo "[Bootstrap complete - v2.0.0-egpu-card-agnostic]"
 echo "  Native llama.cpp web UI : http://<container-ip>:80 (LXC 130 -> 192.168.1.30:80)"
 echo "  Switch models with      : vulkan-switch-model.sh (v1.9.0: VRAM spillover analysis + CTX suggestions + exact cmd)"
-echo "  Pin eGPU to RX480       : egpu-switch-model.sh (backend-agnostic, persists across rebuilds)"
-echo "  GPU backend             : Vulkan (RADV via Mesa, gfx803 Ellesmere RX480 8GB via OCuLink; iGPU gfx1150 also visible)"
-echo "  NOTE: eGPU has 8GB dedicated VRAM — large 30B models will spill to RAM. Use 8-16K ctx + q4_0."
+echo "  Pin eGPU to detected GPU : egpu-switch-model.sh (card-agnostic, persists across rebuilds)"
+echo "  GPU backend             : Vulkan — first available GPU via native PCI passthrough (eGPU only; iGPU isolated)"
+echo "  NOTE: VRAM depends on the GPU model — use ctx/q4_0 to stay within limits."

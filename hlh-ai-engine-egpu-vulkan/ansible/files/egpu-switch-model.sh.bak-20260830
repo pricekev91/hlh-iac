@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # egpu-switch-model.sh
 # Version: 1.6.1-egpu
-# Description: Interactive model switcher for llama.cpp ai-engine service (generic eGPU)
-# Auto-pins --device to the detected eGPU regardless of llama.cpp backend (Vulkan/ROCm/CUDA/etc.)
-# Card-agnostic: works with RX480, NVIDIA K80, AMD MI60, or any Vulkan-capable GPU.
+# Description: Interactive model switcher for llama.cpp ai-engine service (eGPU RX480 variant)
+# Auto-pins --device to RX480 regardless of llama.cpp backend (Vulkan/ROCm/CUDA/etc.)
 # Supports: model selection, ctx-size, KV cache quantization, speculative decoding method (MTP draft / ngram / DFlash2 / none)
 # Changelog:
 #   1.6.1 - Fixed readiness check: probe /health HTTP endpoint instead of
@@ -98,24 +97,27 @@ is_moe_model() {
 # spec_flags is "" for no speculative decoding, otherwise the full flag string
 # (e.g. "--spec-type ngram-mod --spec-ngram-mod-n-match 24 ...").
 # ─── eGPU Detection ──────────────────────────────────────────────────────────
-# Auto-detect ANY Vulkan-capable eGPU (RX480, NVIDIA K80, AMD MI60, etc.)
-# via llama-server --list-devices. Since the LXC only sees one GPU (the eGPU
-# via native PCI passthrough), we simply use the first Vulkan device found.
-# Falls back to Vulkan0 if auto-detection fails.
-detect_egpu_device() {
+# Auto-detect RX480 (Ellesmere/POLARIS10/gfx803 8GB) via llama-server --list-devices.
+# No interactive GPU selection - always pins to RX480 regardless of backend device index.
+detect_rx480_device() {
   local llama_bin="/opt/llama.cpp/build/bin/llama-server"
   local lines=()
   mapfile -t lines < <($llama_bin --list-devices 2>/dev/null | grep -E '^  Vulkan[0-9]+:' || true)
   if [ ${#lines[@]} -eq 0 ]; then
     mapfile -t lines < <(vulkaninfo --summary 2>/dev/null | grep -E '^  Vulkan[0-9]+:' || true)
   fi
-  if [ ${#lines[@]} -eq 0 ]; then
-    echo "Vulkan0"
-    return
+  local rx=""
+  for l in "${lines[@]}"; do
+    if echo "$l" | grep -qiE 'RX ?480|Ellesmere|POLARIS10|gfx803'; then rx="$l"; break; fi
+  done
+  if [ -z "$rx" ]; then
+    for l in "${lines[@]}"; do if echo "$l" | grep -q '8192 MiB'; then rx="$l"; echo "INFO: RX480 fallback 8192 MiB -> $l" >&2; break; fi; done
   fi
-  # Use the first available Vulkan device (only one eGPU in this LXC)
-  local dev
-  dev=$(echo "${lines[0]}" | sed -n 's/^  \(Vulkan[0-9]\+\):.*/\1/p')
+  if [ -z "$rx" ]; then
+    for l in "${lines[@]}"; do if echo "$l" | grep -qiE 'AMD|RADV'; then rx="$l"; echo "INFO: fallback AMD -> $l" >&2; break; fi; done
+  fi
+  if [ -z "$rx" ]; then rx="${lines[0]:-}"; fi
+  local dev=$(echo "$rx" | sed -n 's/^  \(Vulkan[0-9]\+\):.*/\1/p')
   [ -z "$dev" ] && dev="Vulkan0"
   echo "$dev"
 }
@@ -175,7 +177,7 @@ rewrite_execstart() {
 # ─── Banner ────────────────────────────────────────────────────────────────────
 echo ""
 echo "╔══════════════════════════════════════════════════════════════════╗"
-echo "║                egpu-switch-model.sh (eGPU generic)             ║"
+echo "║                egpu-switch-model.sh (RX480)                   ║"
 echo "╠══════════════════════════════════════════════════════════════════╣"
 echo "║  VRAM BUDGET REFERENCE  (model weights + KV cache = total need)  ║"
 echo "║                                                                  ║"
@@ -216,7 +218,7 @@ echo "  KV cache (K/V)  : ${CUR_KV_K} / ${CUR_KV_V}"
 echo "  Spec decode     : $CUR_SPEC"
 echo "  Draft model     : ${CUR_DRAFT:-none}"
 echo "  GPU (current)   : ${CUR_GPU:-both (split)}"
-echo "  GPU (eGPU)      : $CUR_GPU_DETECTED (auto-pinned)"
+echo "  GPU (RX480)     : $CUR_GPU_DETECTED (auto-pinned)"
 echo ""
 
 # ─── Model selection ───────────────────────────────────────────────────────────
@@ -394,7 +396,7 @@ fi
 
 # ─── Summary & confirm ─────────────────────────────────────────────────────────
 echo ""
-GPU_FLAG="--device $(detect_egpu_device 2>/dev/null || echo Vulkan0)"
+GPU_FLAG="--device $(detect_rx480_device 2>/dev/null || echo Vulkan0)"
 echo "  New model   : $NEW_MODEL"
 echo "  ctx-size    : $NEW_CTX"
 echo "  KV cache    : $NEW_KV (K and V)"
@@ -403,7 +405,7 @@ if [ -n "$SPEC_FLAGS" ]; then
 else
   echo "  Spec decode : $NEW_METHOD"
 fi
-echo "  GPU         : $GPU_FLAG (eGPU auto-pinned)"
+echo "  GPU         : $GPU_FLAG (RX480 auto-pinned)"
 echo ""
 read -rp "Apply and restart $SERVICE? [y/N]: " CONFIRM
 if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then

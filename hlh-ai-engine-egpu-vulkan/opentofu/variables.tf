@@ -99,10 +99,16 @@ variable "lxc_root_password" {
   sensitive   = true
 }
 
+variable "egpu_pci_address" {
+  description = "PCI address of the eGPU on the OCuLink connector (e.g. 0000:c5:00.0). Detected automatically by the deploy script. Card-agnostic: same address regardless of GPU model."
+  type        = string
+  default     = "0000:c5:00.0"
+}
+
 variable "description" {
   description = "LXC description"
   type        = string
-  default     = "llama.cpp AI engine with Vulkan (eGPU RX480 Ellesmere POLARIS10 8GB via OCuLink), model storage on RaidZ1-6TB"
+  default     = "llama.cpp AI engine with Vulkan (generic eGPU via OCuLink), model storage on RaidZ1-6TB"
 }
 
 variable "model_mount_path" {
