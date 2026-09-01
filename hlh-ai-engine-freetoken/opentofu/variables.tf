@@ -23,13 +23,13 @@ variable "target_node" {
 variable "hostname" {
   description = "LXC hostname"
   type        = string
-  default     = "hlh-ai-engine-vulkan"
+  default     = "hlh-ai-engine-freetoken"
 }
 
 variable "vmid" {
   description = "LXC VMID"
   type        = number
-  default     = 120
+  default     = 140
 }
 
 variable "ostemplate" {
@@ -77,7 +77,7 @@ variable "bridge" {
 variable "ip_cidr" {
   description = "Static IP in CIDR format"
   type        = string
-  default     = "192.168.1.20/24"
+  default     = "192.168.1.13/24"
 }
 
 variable "gateway" {
@@ -102,7 +102,7 @@ variable "lxc_root_password" {
 variable "description" {
   description = "LXC description"
   type        = string
-  default     = "llama.cpp AI engine with Vulkan (RADV), model storage on RaidZ1-6TB"
+  default     = "FreeToken AI engine with ROCm 7.14.0, model storage on RaidZ1-6TB"
 }
 
 variable "model_mount_path" {

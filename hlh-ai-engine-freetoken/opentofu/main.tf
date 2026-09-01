@@ -14,7 +14,7 @@ provider "proxmox" {
   pm_tls_insecure     = true
 }
 
-resource "proxmox_lxc" "hlh_ai_engine_vulkan" {
+resource "proxmox_lxc" "hlh_ai_engine_freetoken" {
   target_node  = var.target_node
   hostname     = var.hostname
   ostemplate   = var.ostemplate
@@ -47,30 +47,30 @@ resource "proxmox_lxc" "hlh_ai_engine_vulkan" {
     size    = "${var.rootfs_size_gb}G"
   }
 
-  # GPU passthrough - AMD GPU for Vulkan (RADV via Mesa)
-  device {
-    name = "gpu0"
-    gpu  = "gfx1150"
-  }
+  # GPU passthrough for ROCm - 890M iGPU (gfx1150) ONLY
+  # Same approach as LXC 101 (llama.cpp): explicit cgroup2/device mount rules
+  # that expose only the 890M's DRM nodes (card1, renderD129) + shared kfd.
+  # This prevents ROCm from seeing the RX 480 eGPU (gfx803, unsupported) as GPU 0.
 
   # Model storage volume mount (host /srv/ai/models -> LXC /srv/ai/models)
   mp0 {
     path    = var.model_mount_path
     storage = var.model_storage
   }
-
-  # NOTE: the cgroup2 device allow rule (c 226:* rwm) and
-  # bind-mount entry (/dev/dri) must be appended to the
-  # LXC .conf file after creation. Use deploy-hlh-ai-engine-vulkan.sh for
-  # full provisioning or run manually:
-  #   pct set <VMID> --lxc.conf 'lxc.cgroup2.devices.allow: c 226:* rwm'
-  #   pct set <VMID> --lxc.conf 'lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir'
 }
 
 output "lxc_vmid" {
-  value = proxmox_lxc.hlh_ai_engine_vulkan.vmid
+  value = proxmox_lxc.hlh_ai_engine_freetoken.vmid
 }
 
 output "lxc_hostname" {
-  value = proxmox_lxc.hlh_ai_engine_vulkan.hostname
+  value = proxmox_lxc.hlh_ai_engine_freetoken.hostname
+}
+
+output "lxc_ip" {
+  value = proxmox_lxc.hlh_ai_engine_freetoken.network.0.ip_address
+}
+
+output "api_endpoint" {
+  value = "http://${proxmox_lxc.hlh_ai_engine_freetoken.network.0.ip_address}:1919"
 }

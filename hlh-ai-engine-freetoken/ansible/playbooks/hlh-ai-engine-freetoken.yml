@@ -1,0 +1,12 @@
+---
+- name: Configure FreeToken AI engine
+  hosts: hlh_ai_engine_freetoken
+  become: true
+  vars:
+    hlh_offline: false
+
+  tasks:
+    - name: Run FreeToken bootstrap script inside target LXC
+      ansible.builtin.script: ../files/configure-freetoken-inside-lxc.sh
+      environment:
+        HLH_OFFLINE: "{{ (hlh_offline | bool) | ternary('1', '0') }}"
