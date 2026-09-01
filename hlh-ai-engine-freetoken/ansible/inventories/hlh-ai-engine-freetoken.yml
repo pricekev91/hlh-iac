@@ -2,7 +2,7 @@
 hlh_ai_engine_freetoken:
   hosts:
     freetoken:
-      ansible_host: 192.168.1.13
+      ansible_host: 192.168.1.40
       ansible_user: root
       ansible_ssh_private_key_file: ~/.ssh/id_ed25519
 

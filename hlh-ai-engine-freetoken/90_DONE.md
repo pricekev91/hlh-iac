@@ -5,7 +5,7 @@ Completed items.
 ## v0.1.0 — Initial IAC Scaffold
 
 - [x] Project structure created following `hlh-ai-engine` pattern
-- [x] OpenTofu module: LXC 140 config (prox01, 192.168.1.13, ROCm GPU passthrough)
+- [x] OpenTofu module: LXC 140 config (prox01, 192.168.1.40, ROCm GPU passthrough)
 - [x] Ansible: inventory + playbook for FreeToken bootstrap
 - [x] Bootstrap script: ROCm install + uv + FreeToken + systemd service
 - [x] Deploy script: nuke & redeploy LXC 140

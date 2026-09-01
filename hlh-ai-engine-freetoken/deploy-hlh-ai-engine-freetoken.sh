@@ -31,9 +31,33 @@ MODEL_LXC_DIR="/srv/ai/models"
 LXC_ROOTFS_SIZE="64"
 LXC_MEMORY="49152"
 LXC_CORES="12"
-LXC_IP_CONFIG="192.168.1.13/24"
+LXC_IP_CONFIG="192.168.1.40/24"
 LXC_GATEWAY="192.168.1.1"
 ROCM_VERSION="7.14.0"
+
+# === SAFETY: Hard-coded LXC ID — this script ONLY touches CT 140 ===
+# NEVER EDIT THIS VALUE. If you need a different LXC, copy this script
+# and change LXC_ID. The name must match the directory name.
+PROTECTED_LXC_IDS=(140)
+
+# Verify we are NOT accidentally targeting a known-good LXC
+DANGER_IDS=(101 130 102 120)
+for DANGER in "${DANGER_IDS[@]}"; do
+  if [ "$LXC_ID" = "$DANGER" ]; then
+    echo "FATAL: This script is configured to target LXC $LXC_ID but that is a protected LXC ID!"
+    echo "This is likely a configuration error. Aborting."
+    exit 1
+  fi
+done
+
+# Verify script directory name matches LXC_ID to prevent running wrong script
+SCRIPT_DIR_NAME="$(basename "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)")"
+EXPECTED_DIR="hlh-ai-engine-freetoken"
+if [ "$SCRIPT_DIR_NAME" != "$EXPECTED_DIR" ]; then
+  echo "FATAL: Deploy script is in directory '$SCRIPT_DIR_NAME' but expected '$EXPECTED_DIR'."
+  echo "You may be running the wrong deploy script. Aborting."
+  exit 1
+fi
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -140,6 +164,6 @@ pct exec "${LXC_ID}" -- bash /root/freetoken-bootstrap/configure-freetoken-insid
 echo "[6/6] Deployment complete. LXC ${LXC_ID} (${LXC_NAME}) is running."
 echo ""
 echo "  Model storage: ${MODEL_HOST_DIR} (host) <-> ${MODEL_LXC_DIR} (container) on ${POOL}"
-echo "  FreeToken API : http://192.168.1.13:1919/v1/chat/completions"
-echo "  Anthropic API : http://192.168.1.13:1919/v1/messages"
+echo "  FreeToken API : http://192.168.1.40:1919/v1/chat/completions"
+echo "  Anthropic API : http://192.168.1.40:1919/v1/messages"
 echo ""

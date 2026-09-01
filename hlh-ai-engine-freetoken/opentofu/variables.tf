@@ -77,7 +77,7 @@ variable "bridge" {
 variable "ip_cidr" {
   description = "Static IP in CIDR format"
   type        = string
-  default     = "192.168.1.13/24"
+  default     = "192.168.1.40/24"
 }
 
 variable "gateway" {
@@ -102,7 +102,7 @@ variable "lxc_root_password" {
 variable "description" {
   description = "LXC description"
   type        = string
-  default     = "FreeToken AI engine with ROCm 7.14.0, model storage on RaidZ1-6TB"
+  default     = "FreeToken AI engine with ROCm 7.14.0, IP 192.168.1.40, model storage on RaidZ1-6TB"
 }
 
 variable "model_mount_path" {

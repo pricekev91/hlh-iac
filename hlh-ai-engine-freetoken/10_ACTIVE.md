@@ -11,7 +11,9 @@ Items currently in progress.
 - [x] Write deploy script (nuke & redeploy)
 - [x] Write configure script (Ansible wrapper)
 - [x] Write support files (README, BACKLOG, CHANGELOG)
-- [ ] Deploy to prox01 LXC 140
+- [x] FIX: Corrected IP to 192.168.1.40 (was incorrectly .13)
+- [x] FIX: Added hard safety guards to prevent wrong-LXC deployment
+- [ ] Deploy to prox01 LXC 140 (IP 192.168.1.40)
 - [ ] Verify FreeToken service running on port 1919
 - [ ] Run benchmark: FreeToken vs llama.cpp on Qwen3.6-35B-A3B-MTP-Q4_K_M.gguf
 
