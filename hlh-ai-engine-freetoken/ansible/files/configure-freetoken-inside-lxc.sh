@@ -25,7 +25,7 @@ echo "[1/8] Installing base dependencies..."
 apt-get update
 apt-get install -y --no-install-recommends \
   build-essential git cmake pkg-config \
-  python3 python3-pip python3-venv curl wget unzip ca-certificates \
+  python3 python3-pip python3-venv curl wget unzip ca-certificates gnupg \
   libopenblas-dev libssl-dev openssh-server
 
 # --- 1b. ADD ROCM 7.14.0 REPO ---
