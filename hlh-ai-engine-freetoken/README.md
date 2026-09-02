@@ -10,8 +10,9 @@ on AMD ROCm with the Radeon 890M iGPU.
 
 - LXC 140, hostname `hlh-ai-engine-freetoken`, IP `192.168.1.40`
 - ROCm 7.14.0 with AMD RDNA 3 890M iGPU (gfx1150)
-- FreeToken serving on port 1919
-- OpenAI + Anthropic API compatible endpoints
+- FreeToken serving on port 1919 (OpenAI + Anthropic API)
+- Open WebUI on port 80 (Qwen-Chat style UI)
+- Built-in authentication for Open WebUI
 - Model storage on `RaidZ1-6TB` ZFS pool
 
 ## Repository Boundary
@@ -71,6 +72,7 @@ module "hlh_ai_engine_freetoken" {
 
 | Item | Value |
 |------|-------|
+| Web UI (Open WebUI) | `http://192.168.1.40:80` |
 | API endpoint (OpenAI) | `http://192.168.1.40:1919/v1/` |
 | API endpoint (Anthropic) | `http://192.168.1.40:1919/v1/messages` |
 | Model storage | `/srv/ai/models` (host mount) |

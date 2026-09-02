@@ -13,8 +13,13 @@ Items currently in progress.
 - [x] Write support files (README, BACKLOG, CHANGELOG)
 - [x] FIX: Corrected IP to 192.168.1.40 (was incorrectly .13)
 - [x] FIX: Added hard safety guards to prevent wrong-LXC deployment
+- [x] FIX: Added gnupg to base dependencies
+- [x] Added Open WebUI integration (port 80, built-in auth)
+- [x] Added dual systemd services (freetoken + openwebui)
 - [ ] Deploy to prox01 LXC 140 (IP 192.168.1.40)
 - [ ] Verify FreeToken service running on port 1919
+- [ ] Verify Open WebUI service running on port 80
+- [ ] Test inference: Open WebUI → FreeToken → ROCm/890M
 - [ ] Run benchmark: FreeToken vs llama.cpp on Qwen3.6-35B-A3B-MTP-Q4_K_M.gguf
 
 ## Pending GPU Verification

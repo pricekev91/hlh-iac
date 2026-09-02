@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # configure-freetoken-inside-lxc.sh
-# Version: 0.1.0
-# Description: Bootstrap FreeToken AI engine on Ubuntu 24.04 LXC with ROCm passthrough
+# Version: 0.2.0
+# Description: Bootstrap FreeToken AI engine + Open WebUI on Ubuntu 24.04 LXC with ROCm passthrough
 # Target GPU: AMD Radeon 890M (gfx1150/Strix Halo) on Proxmox 9.x privileged LXC
-# Runtime: FreeToken (FlashML MoE serving engine) via uv (Python package manager)
+# Runtime: FreeToken (FlashML MoE serving engine) via uv + Open WebUI (Qwen-Chat style)
 # Requirements: Run as root inside privileged LXC with GPU passthrough and /srv/ai/models bind mount
 # Changelog:
+#   0.2.0 - Added Open WebUI on port 80, configured to connect to FreeToken on localhost:1919
+#           - Built-in authentication enabled for Open WebUI
+#           - Dual systemd services: freetoken (1919) + openwebui (80)
 #   0.1.0 - Initial version: ROCm + uv + FreeToken + systemd service on port 1919
 
 set -euo pipefail
@@ -13,23 +16,24 @@ set -euo pipefail
 # --- CONFIGURABLE ---
 MODEL_DIR="/srv/ai/models"
 DEFAULT_MODEL_FILE="Qwen3.6-35B-A3B-MTP-Q4_K_M.gguf"
-SERVICE_NAME="freetoken"
-SYSTEMD_SERVICE="/etc/systemd/system/${SERVICE_NAME}.service"
 GFX_VERSION="11.5.0"   # gfx1150 native — rocBLAS 7.14.0 supports it
 ROCM_PATH="/opt/rocm"
 ROCM_VERSION="7.14.0"
 FT_VERSION=""  # empty = latest
+OPENWEBUI_REPO="https://github.com/open-webui/open-webui.git"
+OPENWEBUI_DIR="/opt/open-webui"
 
 # --- 1. BASE DEPENDENCIES ---
-echo "[1/8] Installing base dependencies..."
+echo "[1/10] Installing base dependencies..."
 apt-get update
 apt-get install -y --no-install-recommends \
   build-essential git cmake pkg-config \
   python3 python3-pip python3-venv curl wget unzip ca-certificates gnupg \
-  libopenblas-dev libssl-dev openssh-server
+  libopenblas-dev libssl-dev openssh-server \
+  nodejs npm
 
 # --- 1b. ADD ROCM 7.14.0 REPO ---
-echo "[1b/8] Adding ROCm ${ROCM_VERSION} repository..."
+echo "[1b/10] Adding ROCm ${ROCM_VERSION} repository..."
 mkdir -p /etc/apt/keyrings
 wget -qO - https://repo.amd.com/rocm/packages-multi-arch/gpg/rocm.gpg | \
   gpg --dearmor | tee /etc/apt/keyrings/amdrocm.gpg > /dev/null
@@ -78,7 +82,7 @@ systemctl enable ssh
 systemctl restart ssh || systemctl restart sshd
 
 # --- 1c. INSTALL uv (Python package manager) ---
-echo "[1c/8] Installing uv (Python package manager)..."
+echo "[1c/10] Installing uv (Python package manager)..."
 curl -LsSf https://astral.sh/uv/install.sh | sh 2>&1
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> /root/.bashrc
 export PATH="$HOME/.local/bin:$PATH"
@@ -86,7 +90,7 @@ command -v uv >/dev/null || { echo "ERROR: uv installation failed"; exit 1; }
 uv --version
 
 # --- 2. ROCm Environment Setup ---
-echo "[2/8] Setting up ROCm environment..."
+echo "[2/10] Setting up ROCm environment..."
 tee /etc/profile.d/rocm.env << EOF
 export PATH=\$PATH:${ROCM_PATH}/bin:${ROCM_PATH}/llvm/bin
 export LD_LIBRARY_PATH=${ROCM_PATH}/lib:\${LD_LIBRARY_PATH:-}
@@ -100,7 +104,7 @@ source /etc/profile.d/rocm.env
 set -u
 
 # --- 3. INSTALL FREETOKEN ---
-echo "[3/8] Installing FreeToken via uv..."
+echo "[3/10] Installing FreeToken via uv..."
 
 # Create a virtual environment for FreeToken
 FT_VENV="/opt/freetoken-venv"
@@ -109,7 +113,6 @@ uv venv "$FT_VENV"
 source "$FT_VENV/bin/activate"
 
 # Install FreeToken — ROCm acceleration package
-# Use ROCm build when GPU available, CPU fallback otherwise
 if command -v rocm-smi &>/dev/null || command -v rocm-smi2 &>/dev/null; then
   echo "ROCm GPU detected — installing freetoken with ROCm acceleration..."
   if [ -n "$FT_VERSION" ]; then
@@ -128,7 +131,6 @@ fi
 
 # Verify FreeToken install
 if ! command -v ft &>/dev/null; then
-  # Try to find ft in the venv
   FT_BIN="$FT_VENV/bin/ft"
   if [ -f "$FT_BIN" ]; then
     ln -sf "$FT_BIN" /usr/local/bin/ft
@@ -140,7 +142,7 @@ fi
 echo "FreeToken installed: $(ft --version 2>/dev/null || echo 'version unknown')"
 
 # --- 4. MODEL STORAGE & VERIFICATION ---
-echo "[4/8] Checking model directory..."
+echo "[4/10] Checking model directory..."
 mkdir -p "$MODEL_DIR"
 
 if [ -f "${MODEL_DIR}/${DEFAULT_MODEL_FILE}" ]; then
@@ -157,9 +159,41 @@ else
   fi
 fi
 
-# --- 5. SYSTEMD SERVICE ---
-echo "[5/8] Creating systemd service for FreeToken..."
-cat > "$SYSTEMD_SERVICE" << UNIT
+# --- 5. INSTALL OPEN WEBUI FROM GITHUB ---
+echo "[5/10] Installing Open WebUI from GitHub..."
+
+if [ -d "$OPENWEBUI_DIR/.git" ]; then
+  echo "Open WebUI repository already exists — updating..."
+  cd "$OPENWEBUI_DIR"
+  git fetch --all
+  git reset --hard origin/main 2>/dev/null || git reset --hard origin/master 2>/dev/null || true
+else
+  echo "Cloning Open WebUI repository..."
+  git clone --depth=1 "$OPENWEBUI_REPO" "$OPENWEBUI_DIR"
+fi
+
+cd "$OPENWEBUI_DIR"
+
+# Install Node.js dependencies and build
+echo "Installing Open WebUI dependencies..."
+if [ -f "pnpm-lock.yaml" ]; then
+  npm install -g pnpm 2>&1 | tail -1
+  pnpm install 2>&1
+elif [ -f "package-lock.json" ]; then
+  npm ci 2>&1 || npm install 2>&1
+else
+  echo "WARNING: No lock file found — running npm install..."
+  npm install 2>&1
+fi
+
+echo "Building Open WebUI frontend..."
+npm run build 2>&1 | tail -5
+
+echo "Open WebUI installed at $OPENWEBUI_DIR"
+
+# --- 6. FREETOKEN SYSTEMD SERVICE ---
+echo "[6/10] Creating systemd service for FreeToken..."
+cat > /etc/systemd/system/freetoken.service << UNIT
 [Unit]
 Description=FreeToken AI Engine (FlashML MoE serving engine)
 After=network.target rocm-smi.service
@@ -186,15 +220,42 @@ User=root
 [Install]
 WantedBy=multi-user.target
 UNIT
+echo "FreeToken service unit written"
 
-echo "Service unit written to $SYSTEMD_SERVICE"
+# --- 7. OPEN WEBUI SYSTEMD SERVICE ---
+echo "[7/10] Creating systemd service for Open WebUI..."
+cat > /etc/systemd/system/openwebui.service << UNIT
+[Unit]
+Description=Open WebUI (AI Chat Interface)
+After=network.target freetoken.service
+Requires=freetoken.service
 
-# --- 6. MODEL SWITCH SCRIPT ---
-echo "[6/8] Creating interactive model switcher..."
+[Service]
+Type=simple
+WorkingDirectory=${OPENWEBUI_DIR}
+Environment=PORT=80
+Environment=HOSTNAME=0.0.0.0
+Environment=WEBUI_AUTH=True
+Environment=OPENAI_API_BASE_URL=http://localhost:1919/v1
+Environment=OPENAI_API_KEY=freetoken-local-key
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin
+Environment=NODE_ENV=production
+ExecStart=${OPENWEBUI_DIR}/node_modules/.bin/node ${OPENWEBUI_DIR}/backend/main.py
+Restart=on-failure
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+echo "Open WebUI service unit written"
+
+# --- 8. MODEL SWITCH SCRIPT ---
+echo "[8/10] Creating interactive model switcher..."
 cat > /usr/local/bin/switch-freetoken-model.sh << 'EOS'
 #!/usr/bin/env bash
 # switch-freetoken-model.sh
-# Version: 0.1.0
+# Version: 0.2.0
 # Description: Interactive model switcher for FreeToken AI engine
 # Usage: Run inside the FreeToken LXC as root
 set -euo pipefail
@@ -338,6 +399,7 @@ if [ "$OK" = "1" ]; then
   CONTAINER_IP="$(hostname -I | awk '{print $1}')"
   echo "  OpenAI API : http://$CONTAINER_IP:1919/v1/chat/completions"
   echo "  Anthropic  : http://$CONTAINER_IP:1919/v1/messages"
+  echo "  Open WebUI : http://$CONTAINER_IP:80"
   echo "  Watch logs : journalctl -u $SERVICE -f"
   echo "  GPU usage  : rocm-smi"
 else
@@ -352,17 +414,21 @@ chmod +x /usr/local/bin/switch-freetoken-model.sh
 cp /usr/local/bin/switch-freetoken-model.sh "${MODEL_DIR}/switch-freetoken-model.sh"
 chmod +x "${MODEL_DIR}/switch-freetoken-model.sh"
 
-# --- 7. ENABLE & START SERVICE ---
-echo "[7/8] Enabling and starting $SERVICE_NAME..."
+# --- 9. ENABLE & START SERVICES ---
+echo "[9/10] Enabling and starting services..."
 systemctl daemon-reload
-systemctl enable --now "$SERVICE_NAME"
-sleep 3
+systemctl enable --now freetoken.service
+systemctl enable --now openwebui.service
+sleep 5
 
-# --- 8. VERIFICATION ---
-echo "[8/8] Verifying setup..."
+# --- 10. VERIFICATION ---
+echo "[10/10] Verifying setup..."
 echo ""
 echo "[Service status]"
-systemctl status "$SERVICE_NAME" --no-pager
+echo ""
+systemctl status freetoken --no-pager 2>/dev/null || echo "FreeToken service not running"
+echo ""
+systemctl status openwebui --no-pager 2>/dev/null || echo "Open WebUI service not running"
 echo ""
 
 echo "[FreeToken version]"
@@ -373,7 +439,7 @@ echo "[ROCm GPU status]"
 rocm-smi 2>/dev/null || rocm-smi2 2>/dev/null || echo "rocm-smi not responding"
 echo ""
 
-echo "[Health check]"
+echo "[Health check - FreeToken (1919)]"
 if curl -fsS -m 3 http://localhost:1919/health 2>/dev/null; then
   echo ""
   echo "[✓] FreeToken is responding on port 1919"
@@ -383,9 +449,21 @@ else
 fi
 echo ""
 
-echo "[Bootstrap complete - v0.1.0]"
-echo "  OpenAI API    : http://<container-ip>:1919/v1/chat/completions"
-echo "  Anthropic API : http://<container-ip>:1919/v1/messages"
-echo "  Switch models : switch-freetoken-model.sh"
-echo "  GPU device    : gfx1150 (AMD Radeon 890M)"
-echo "  ROCm version  : ${ROCM_VERSION}"
+echo "[Health check - Open WebUI (80)]"
+if curl -fsS -m 3 http://localhost:80/ 2>/dev/null | grep -q "html"; then
+  echo "[✓] Open WebUI is responding on port 80"
+else
+  echo "[!] Open WebUI web interface not yet available (may still be starting)"
+  echo "    Check logs: journalctl -u openwebui -f"
+fi
+echo ""
+
+echo "[Bootstrap complete - v0.2.0]"
+echo "  ┌─────────────────────────────────────────────────────────────┐"
+echo "  │  Open WebUI:        http://<container-ip>:80                │"
+echo "  │  OpenAI API:        http://<container-ip>:1919/v1/          │"
+echo "  │  Anthropic API:     http://<container-ip>:1919/v1/messages │"
+echo "  │  GPU device:        gfx1150 (AMD Radeon 890M)              │"
+echo "  │  ROCm version:      ${ROCM_VERSION}                        │"
+echo "  │  Model switcher:    switch-freetoken-model.sh               │"
+echo "  └─────────────────────────────────────────────────────────────┘"

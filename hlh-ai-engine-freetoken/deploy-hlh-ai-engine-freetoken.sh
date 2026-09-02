@@ -13,7 +13,7 @@ This is the direct Proxmox bootstrap path (no OpenTofu):
 	1) Nuke & recreate LXC 140 (hlh-ai-engine-freetoken)
 	2) Configure ROCm GPU passthrough (890M iGPU)
 	3) Start container
-	4) Push/run in-container bootstrap script (FreeToken install + systemd service)
+	4) Push/run in-container bootstrap script (FreeToken + Open WebUI install)
 
 Options:
 	-h|--help    Show this help message
@@ -98,8 +98,8 @@ confirm_existing_lxc_delete() {
 }
 
 echo "============================================================"
-echo "  FreeToken AI Engine — LXC ${LXC_ID} (${LXC_NAME})"
-echo "  Deploying on prox01 | ROCm ${ROCM_VERSION} | 890M iGPU"
+echo "  FreeToken AI Engine + Open WebUI — LXC ${LXC_ID} (${LXC_NAME})"
+echo "  Deploying on prox01 | ROCm ${ROCM_VERSION} | 890M iGPU | Open WebUI :80"
 echo "============================================================"
 echo ""
 
@@ -127,7 +127,7 @@ pct create "${LXC_ID}" "${LXC_IMAGE}" \
 	--unprivileged 0 \
 	--onboot 1 \
 	--mp0 "${MODEL_HOST_DIR},mp=${MODEL_LXC_DIR}" \
-	--description "FreeToken AI engine with ROCm ${ROCM_VERSION}, model storage on ${POOL}"
+	--description "FreeToken AI engine + Open WebUI with ROCm ${ROCM_VERSION}, model storage on ${POOL}"
 
 echo "[3/6] Adding ROCm GPU passthrough devices (890M iGPU)..."
 # Same GPU passthrough as LXC 101 (hlh-ai-engine):
@@ -155,8 +155,8 @@ echo "[4/6] Starting LXC ${LXC_ID}..."
 pct start "${LXC_ID}"
 sleep 5
 
-echo "[5/6] Running in-container bootstrap (FreeToken install)..."
-echo "  This will take 10-25 minutes (compiling ROCm kernels, installing Python packages)..."
+echo "[5/6] Running in-container bootstrap (FreeToken + Open WebUI)..."
+echo "  This will take 15-30 minutes (ROCm kernels, Python, Node.js, FreeToken, Open WebUI build)..."
 pct exec "${LXC_ID}" -- mkdir -p /root/freetoken-bootstrap
 pct push "${LXC_ID}" "$BOOTSTRAP_SCRIPT" /root/freetoken-bootstrap/configure-freetoken-inside-lxc.sh --perms 0755
 pct exec "${LXC_ID}" -- bash /root/freetoken-bootstrap/configure-freetoken-inside-lxc.sh
@@ -164,6 +164,10 @@ pct exec "${LXC_ID}" -- bash /root/freetoken-bootstrap/configure-freetoken-insid
 echo "[6/6] Deployment complete. LXC ${LXC_ID} (${LXC_NAME}) is running."
 echo ""
 echo "  Model storage: ${MODEL_HOST_DIR} (host) <-> ${MODEL_LXC_DIR} (container) on ${POOL}"
-echo "  FreeToken API : http://192.168.1.40:1919/v1/chat/completions"
-echo "  Anthropic API : http://192.168.1.40:1919/v1/messages"
-echo ""
+echo "  ┌─────────────────────────────────────────────────────────────┐"
+echo "  │  Open WebUI:        http://192.168.1.40:80                  │"
+echo "  │  OpenAI API:        http://192.168.1.40:1919/v1/            │"
+echo "  │  Anthropic API:     http://192.168.1.40:1919/v1/messages   │"
+echo "  │  GPU device:        gfx1150 (AMD Radeon 890M)              │"
+echo "  │  ROCm version:      ${ROCM_VERSION}                          │"
+echo "  └─────────────────────────────────────────────────────────────┘"

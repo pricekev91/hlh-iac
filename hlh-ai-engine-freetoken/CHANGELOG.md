@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenTofu module for LXC 140 provisioning
 - Ansible playbook for FreeToken bootstrap (ROCm + uv + Python)
 - Deploy script with nuke & redeploy capability
+- Configure script: Ansible-based reconfiguration
 - Model switch script (`switch-freetoken-model.sh`)
-- Bootstrap script: ROCm 7.14.0 + uv + FreeToken + systemd service on port 1919
+- Bootstrap script: ROCm 7.14.0 + uv + FreeToken + systemd service
 - GPU passthrough: 890M iGPU (gfx1150) via cgroup2 rules
 - Discovery doc updated: ROCm path confirmed, NVIDIA blocker resolved
 
@@ -24,3 +25,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Directory name verification to prevent running wrong script
   - Clear confirmation prompt before any LXC destruction
 - All IP references updated across all files (README, deploy, inventory, tofu)
+- Added gnupg to base dependencies for ROCm repo key import
+
+## [0.2.0] - Open WebUI Integration
+
+### Added
+- Open WebUI installed from GitHub on port 80
+- Open WebUI configured to connect to FreeToken on localhost:1919
+- Built-in authentication enabled for Open WebUI (`WEBUI_AUTH=True`)
+- Dual systemd services: `freetoken.service` (1919) + `openwebui.service` (80)
+- Open WebUI service depends on FreeToken service
+- Updated bootstrap script to build Open WebUI from source (Node.js)
+- Updated deploy script output to show both services
+- Updated README with runtime contract for both services
+
+### Changed
+- Bootstrap script step count: 8/8 → 10/10 (added Node.js + Open WebUI build steps)
+- Deploy script output: updated to show Open WebUI endpoint on port 80
+- Open WebUI uses `main.py` directly (not Docker) as per user requirements
