@@ -24,16 +24,16 @@ OPENWEBUI_REPO="https://github.com/open-webui/open-webui.git"
 OPENWEBUI_DIR="/opt/open-webui"
 
 # --- 1. BASE DEPENDENCIES ---
-echo "[1/10] Installing base dependencies..."
+echo "[1/11] Installing base dependencies..."
 apt-get update
 apt-get install -y --no-install-recommends \
   build-essential git cmake pkg-config \
   python3 python3-pip python3-venv curl wget unzip ca-certificates gnupg \
   libopenblas-dev libssl-dev openssh-server \
-  nodejs npm
+  software-properties-common
 
 # --- 1b. ADD ROCM 7.14.0 REPO ---
-echo "[1b/10] Adding ROCm ${ROCM_VERSION} repository..."
+echo "[1b/11] Adding ROCm ${ROCM_VERSION} repository..."
 mkdir -p /etc/apt/keyrings
 wget -qO - https://repo.amd.com/rocm/packages-multi-arch/gpg/rocm.gpg | \
   gpg --dearmor | tee /etc/apt/keyrings/amdrocm.gpg > /dev/null
@@ -81,8 +81,15 @@ EOF
 systemctl enable ssh
 systemctl restart ssh || systemctl restart sshd
 
-# --- 1c. INSTALL uv (Python package manager) ---
-echo "[1c/10] Installing uv (Python package manager)..."
+# --- 1c. INSTALL Node.js 20.x (Open WebUI requires >= 20) ---
+echo "[1c/11] Installing Node.js 20.x..."
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs
+node --version
+npm --version
+
+# --- 1d. INSTALL uv (Python package manager) ---
+echo "[1d/11] Installing uv (Python package manager)..."
 curl -LsSf https://astral.sh/uv/install.sh | sh 2>&1
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> /root/.bashrc
 export PATH="$HOME/.local/bin:$PATH"
@@ -90,7 +97,7 @@ command -v uv >/dev/null || { echo "ERROR: uv installation failed"; exit 1; }
 uv --version
 
 # --- 2. ROCm Environment Setup ---
-echo "[2/10] Setting up ROCm environment..."
+echo "[2/11] Setting up ROCm environment..."
 tee /etc/profile.d/rocm.env << EOF
 export PATH=\$PATH:${ROCM_PATH}/bin:${ROCM_PATH}/llvm/bin
 export LD_LIBRARY_PATH=${ROCM_PATH}/lib:\${LD_LIBRARY_PATH:-}
@@ -104,7 +111,7 @@ source /etc/profile.d/rocm.env
 set -u
 
 # --- 3. INSTALL FREETOKEN ---
-echo "[3/10] Installing FreeToken via uv..."
+echo "[3/11] Installing FreeToken via uv..."
 
 # Create a virtual environment for FreeToken
 FT_VENV="/opt/freetoken-venv"
@@ -112,13 +119,14 @@ mkdir -p "$FT_VENV"
 uv venv "$FT_VENV"
 source "$FT_VENV/bin/activate"
 
-# Install FreeToken — ROCm acceleration package
+# Install FreeToken — [accel] is the correct extra name (not [rocm])
+# ROCm acceleration is handled by the ROCm packages installed earlier
 if command -v rocm-smi &>/dev/null || command -v rocm-smi2 &>/dev/null; then
-  echo "ROCm GPU detected — installing freetoken with ROCm acceleration..."
+  echo "ROCm GPU detected — installing freetoken with accel backend..."
   if [ -n "$FT_VERSION" ]; then
-    uv pip install "freetoken[rocm]==${FT_VERSION}"
+    uv pip install "freetoken[accel]==${FT_VERSION}"
   else
-    uv pip install "freetoken[rocm]"
+    uv pip install "freetoken[accel]"
   fi
 else
   echo "No ROCm GPU detected — installing FreeToken CPU-only..."
@@ -142,7 +150,7 @@ fi
 echo "FreeToken installed: $(ft --version 2>/dev/null || echo 'version unknown')"
 
 # --- 4. MODEL STORAGE & VERIFICATION ---
-echo "[4/10] Checking model directory..."
+echo "[4/11] Checking model directory..."
 mkdir -p "$MODEL_DIR"
 
 if [ -f "${MODEL_DIR}/${DEFAULT_MODEL_FILE}" ]; then
@@ -160,7 +168,7 @@ else
 fi
 
 # --- 5. INSTALL OPEN WEBUI FROM GITHUB ---
-echo "[5/10] Installing Open WebUI from GitHub..."
+echo "[5/11] Installing Open WebUI from GitHub..."
 
 if [ -d "$OPENWEBUI_DIR/.git" ]; then
   echo "Open WebUI repository already exists — updating..."
@@ -192,7 +200,7 @@ npm run build 2>&1 | tail -5
 echo "Open WebUI installed at $OPENWEBUI_DIR"
 
 # --- 6. FREETOKEN SYSTEMD SERVICE ---
-echo "[6/10] Creating systemd service for FreeToken..."
+echo "[6/11] Creating systemd service for FreeToken..."
 cat > /etc/systemd/system/freetoken.service << UNIT
 [Unit]
 Description=FreeToken AI Engine (FlashML MoE serving engine)
@@ -223,7 +231,7 @@ UNIT
 echo "FreeToken service unit written"
 
 # --- 7. OPEN WEBUI SYSTEMD SERVICE ---
-echo "[7/10] Creating systemd service for Open WebUI..."
+echo "[7/11] Creating systemd service for Open WebUI..."
 cat > /etc/systemd/system/openwebui.service << UNIT
 [Unit]
 Description=Open WebUI (AI Chat Interface)
@@ -251,7 +259,7 @@ UNIT
 echo "Open WebUI service unit written"
 
 # --- 8. MODEL SWITCH SCRIPT ---
-echo "[8/10] Creating interactive model switcher..."
+echo "[8/11] Creating interactive model switcher..."
 cat > /usr/local/bin/switch-freetoken-model.sh << 'EOS'
 #!/usr/bin/env bash
 # switch-freetoken-model.sh
@@ -415,14 +423,14 @@ cp /usr/local/bin/switch-freetoken-model.sh "${MODEL_DIR}/switch-freetoken-model
 chmod +x "${MODEL_DIR}/switch-freetoken-model.sh"
 
 # --- 9. ENABLE & START SERVICES ---
-echo "[9/10] Enabling and starting services..."
+echo "[9/11] Enabling and starting services..."
 systemctl daemon-reload
 systemctl enable --now freetoken.service
 systemctl enable --now openwebui.service
 sleep 5
 
 # --- 10. VERIFICATION ---
-echo "[10/10] Verifying setup..."
+echo "[10/11] Verifying setup..."
 echo ""
 echo "[Service status]"
 echo ""
