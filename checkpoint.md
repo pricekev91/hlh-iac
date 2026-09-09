@@ -1,6 +1,6 @@
-# HLH-IAC Checkpoint — 2026-09-09 14:00 UTC — CUDA K80 Working Fallback
+# HLH-IAC Checkpoint — 2026-09-09 18:30 UTC — CUDA K80 Fixed (470 reuse, dynamic UVM, noble CUDA)
 
-> Single-file bootstrap to resume from scratch. Hosts, auth, IAC, drivers, architecture, and current/next steps. This is the CUDA fallback point before Vulkan test.
+> Single-file bootstrap to resume from scratch. Hosts, auth, IAC, drivers, architecture, and current/next steps. Fix for llama.cpp not running (docs + UVM + CUDA + tofu).
 
 ---
 
@@ -21,7 +21,7 @@
 
 **Repo:** `pricekev91/hlh-iac` `main` `git@github.com:pricekev91/hlh-iac.git` cloned at `/home/pricekev/git/hlh-iac` (laptop) and `/root/git/hlh-iac` (prox01). Push via `ssh` `git@github.com`, pull via `https` or `ssh`.
 
-**Model storage:** Host `RaidZ1-6TB` ZFS `RaidZ1-6TB/ai/models` `/srv/ai/models` `775` `zfs` `xattr,noacl` bind-mounted as `mp0` into every `LXC` at `/srv/ai/models`.
+**Model storage:** Host `RaidZ1-6TB` ZFS `RaidZ1-6TB/ai/models` `/srv/ai/models` `775` `zfs` `xattr,noacl` bind-mounted as `mp0` into every `LXC` at `/srv/ai/models` **(same path host and CT via `--mp0 /srv/ai/models,mp=/srv/ai/models`, OpenTofu `volume="/srv/ai/models" mp="/srv/ai/models"`)**.
 
 ---
 
@@ -42,9 +42,10 @@
                               ROCm 7.14        CUDA 11.8        Vulkan           Vulkan
                               890M gfx1150    K80 GK210 x2     RX480 gfx803     890M iGPU
                               512M VRAM       2x11441MiB       8GB              512M
-                              /dev/kfd +      /dev/nvidia0/1   /dev/dri         /dev/dri
-                              /dev/dri        nvidiactl/uvm    c226:* rwm       c226:* rwm
-                              card0/renderD128 195:* 507:*510:*  /dev/dri bind    /dev/dri bind
+                               /dev/kfd +      /dev/nvidia0/1   /dev/dri         /dev/dri
+                               /dev/dri        nvidiactl/uvm    c226:* rwm       c226:* rwm
+                               card0/renderD128 195:* +511/507*   /dev/dri bind    /dev/dri bind
+                                                (dynamic UVM)                
                               |               |               |
                               +-------+-------+               |
                                       | OCuLink c5:00.0 (single slot, only one of 130/131 can run)
@@ -53,7 +54,7 @@
                                                   or RX480 (when swapped)
 
 All LXCs: privileged (unprivileged 0), nesting=1,keyctl=1,fuse=1, onboot 1 (101 onboot 1, 131 onboot 1 but must stop 130 first),
-          rootfs RaidZ1-6TB 64G, 12c 8G (101 49G), mp0 /srv/ai/models
+           rootfs RaidZ1-6TB 64G, 12c 8G (101 49G), mp0 /srv/ai/models same path host+CT (bind, not storage volume)
 ```
 
 ---
@@ -82,36 +83,37 @@ hlh-iac/
 | Component | Version | Why | Where Pinned |
 |-----------|---------|-----|--------------|
 | Host kernel | `7.0.14-11-pve` pinned | 890M needs ≥6.11 DCN 3.5 | proxmox-boot-tool kernel pin |
-| NVIDIA driver | `470.256.02` last Kepler cc3.7 | K80 GK210 EOL | deploy: NVIDIA_TESLA_470_VERSION + joanbm patch |
-| CUDA | `11.8.0-1` `11.8.89` | last with cc3.7 | ubuntu2204 repo |
-| LXC gcc | `gcc-11` | CUDA 11.8 rejects gcc>11 | configure |
-| LXC nvidia userspace | `470.256.02-0ubuntu0.24.04.1` | avoid 535 transitional | configure |
-| llama.cpp | `0.4.0-dev 304665f GGML_CUDA=ON ARCH37` | K80 | configure |
-| nvidia_uvm | `507:0` + `nvidia-uvm-devices.service` | fix reboot CPU fallback | deploy + /etc/modules-load.d/nvidia.conf + /etc/systemd/system/nvidia-uvm-devices.service |
+| NVIDIA driver (host) | `470.256.02-1~deb11u2` (host) `470.256.02` | last Kepler cc3.7 | deploy: NVIDIA_TESLA_470_VERSION + joanbm patch, `/etc/modules-load.d/nvidia.conf` |
+| CUDA (host) | `11.8` via `cuda-debian13` | last with cc3.7 | deploy cuda-debian13 repo |
+| CUDA (LXC) | `11.8.0-1` `11.8.89` ubuntu2204 + jammy `libtinfo5` pin 100 | last with cc3.7 | configure: `cuda-ubuntu2204.list` + `jammy-libtinfo5-pin` + `cuda-nvcc-11-8` (no nsight) |
+| LXC gcc | `gcc-11` | CUDA 11.8 rejects gcc>11 | configure `CC=gcc-11` + `update-alternatives` |
+| LXC nvidia userspace | `470.256.02-0ubuntu0.24.04.1` reused 470 | avoid 535 transitional, reuse host 470 branch | configure `libnvidia-compute-470`/`nvidia-utils-470` + `apt-mark hold 470/535/cuda` + `/tmp/nvidia-smi` push |
+| llama.cpp | `0.4.0-dev 304665f GGML_CUDA=ON ARCH37 FA=OFF` | K80 Kepler | configure `cmake -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=37 -DGGML_CUDA_FA=OFF` |
+| nvidia_uvm | dynamic `$(grep nvidia-uvm /proc/devices)` 511/507 + `nvidia-uvm-devices.service` Before pve-guests + `/etc/modules-load.d/nvidia.conf` | fix reboot CPU fallback (major drift 7.0=511) | deploy `nvidia-uvm-devices.service` + `mknod c $UVM_MAJOR` |
 
 ---
 
-## 5. Current State (as of 2026-09-09 14:00 UTC) — CUDA Fallback Point
+## 5. Current State (as of 2026-09-09 18:30 UTC) — After Fix (to be verified by nuke/rebuild)
 
 **Host prox01:**
-* `7.0.14-11-pve` pinned, `nvidia-smi 470.256.02 2x K80 11441MiB P0 55W/73W`, `nvidia_uvm 1368064`, `507:0` via `nvidia-uvm-devices.service` Before pve-guests
-* `pct list` 101 running, 102 running, 131 running, 130/120 stopped
+* `7.0.14-11-pve` pinned, `nvidia-smi 470.256.02 2x K80 11441MiB P0 55W/73W`, `nvidia_uvm` dynamic major (`grep nvidia-uvm /proc/devices` → `511` on 7.0, `507` legacy) via fixed `nvidia-uvm-devices.service` Before pve-guests + `chmod` fallback
+* `pct list` 101 running, 102 running, 131 to be rebuilt (nuke), 130/120 stopped — OCuLink single slot
 
-**LXC 131 hlh-ai-engine-egpu-k80 192.168.1.31:**
-* `ai-engine.service` active `Mellum2-12B-A2.5B-Thinking-Q3_K_M.gguf` `32768 ctx` `-ngl 99` `batch 512` `q4_0` `CUDA_VISIBLE_DEVICES=0,1` `PID 21262` after switch tests
-* `nvidia-smi` `470.256.02` `2 GPUs` `3324/3125MiB` (Mellum) or `11022/11177MiB` (Qwen35B MTP 8192), `llama-bench pp20 42.6 tg128 17.9 CUDA`
-* `k80-switch-model.sh v1.7.0-k80` at `/usr/local/bin/k80-switch-model.sh` + `/srv/ai/models/k80-switch-model.sh` (single source) — banner VRAM 2x12GB=24GB, MTP/ngram/none, /health probe
-* **Known failure:** `Qwen3.6-35B-A3B-MTP-Q4_K_M.gguf` with `--spec-type draft-mtp --spec-draft-n-max 5` ABRT `CUBLAS_STATUS_ARCH_MISMATCH` on `cublasGemmEx` `device 1` `ggml-cuda.cu:1551` — MTP draft kernels unsupported on cc3.7. Without MTP `3 tok/s` on Qwen3.8 27B, with MTP cannot run on CUDA. `failed to fit params` warning for -ngl 99 is benign (forced).
-* `Qwen3.8-27B` (frontier, small footprint) target: want MTP speed, currently CUDA without MTP is unusable.
+**LXC 131 hlh-ai-engine-egpu-k80 192.168.1.31 (after this commit, pending deploy):**
+* `ai-engine.service` will be `Mellum2-12B-A2.5B-Thinking-Q3_K_M.gguf` `32768 ctx` `-ngl 99` `batch 512` `q4_0` `CUDA_VISIBLE_DEVICES=0,1` — model file exists **after** `/srv/ai/models` bind mount (host and CT same path, no download in bootstrap)
+* Fixes applied: `libnvidia-compute-470` 470 reused in CT (hold 470/535/cuda), jammy `libtinfo5` pin 100 (not whole jammy), `cuda-nvcc-11-8` first (no silent `download`), `fuse=1` aligned, `mp0` bind `volume+mp`, dynamic UVM, docs rewritten for K80
+* `k80-switch-model.sh v1.7.0-k80` at `/usr/local/bin/k80-switch-model.sh` + `/srv/ai/models/k80-switch-model.sh` (single source) — banner VRAM 2x12GB=24GB, MTP/ngram/none, /health probe 90×2s, `nvidia-smi -L` expects 2 GPUs
+* **Known limitation:** `Qwen3.6-35B-A3B-MTP-Q4_K_M.gguf` with `--spec-type draft-mtp` ABRT `CUBLAS_STATUS_ARCH_MISMATCH` on cc 3.7 (Kepler lacks MTP kernels) — use `none`/`ngram` on K80. `failed to fit params` for `-ngl 99` benign.
 
-**IAC git:** `pricekev91/hlh-iac main` at `d774a43` `fix: remove extra symlinks, keep only k80-switch-model.sh` (ahead). Tag `k80-dual-gpu-working` on `6b2b849` marks dual GPU working.
+**IAC git:** `pricekev91/hlh-iac main` at this commit (fix: docs + 470 reuse + dynamic UVM + noble CUDA + tofu mp0). Tag `k80-dual-gpu-working` on `6b2b849` prior. Previous fallback `d774a43`.
 
 ---
 
-## 6. Next Step: Test Vulkan for K80
+## 6. Next Step: Verify K80 Nuke/Rebuild + MI60
 
-* Build `llama.cpp` with `GGML_VULKAN=ON GGML_CUDA=OFF` on 131, test `Qwen3.8-27B` with `vulkan + MTP` vs `cuda + none`. Fallback to this CUDA checkpoint if Vulkan not faster (llvmpipe risk per checkpoint 03:30).
-* MI60 (gfx900) arriving in week — shared `/srv/ai/models/k80-switch-model.sh` designed for reuse.
+* **Nuke/rebuild 131:** `cd /root/git/hlh-iac && git pull && bash hlh-ai-engine-egpu-k80/deploy-hlh-ai-engine-egpu-k80.sh` (full) or `--skip-host-driver` if host 470 already pinned. Verify `ls -l /dev/nvidia*` (host+CT) UVM major matches `grep nvidia-uvm /proc/devices`, `pct exec 131 -- nvidia-smi -L` 2 GPUs, `systemctl status ai-engine`, `curl http://127.0.0.1:80/health`.
+* MI60 (gfx900) arriving in week — shared `/srv/ai/models/k80-switch-model.sh` designed for reuse via same bind mount path.
+* Optional Vulkan trial for K80 deferred — K80 stays CUDA (Vulkan on 130 was RX480 path).
 
 ---
 
